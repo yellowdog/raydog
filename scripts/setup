@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+HERE=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+VENV=$HERE/../venv
+
+if [ ! -e $VENV ] ; then
+    echo "Creating venv"
+    python3 -m venv $VENV
+
+    echo "Installing pip dependencies"
+    $VENV/bin/python3 -m pip install -e $HERE/..
+fi
+
+echo "Activating venv"
+VIRTUAL_ENV_DISABLE_PROMPT=true
+source $VENV/bin/activate
+
+echo "Setting up environment"
+
+cat > $HERE/../.env <<EOM
+ENV_NAME="prod-demo"
+SSH_PUBLIC_KEY=`cat $HOME/.ssh/id_ed25519.pub`
+YD_API_URL="https://api.yellowdog.ai"
+EOM
+
+cat $HERE/secrets >> $HERE/../.env

@@ -1,0 +1,9 @@
+lab_domain:   'thebonds.local'
+
+# the prototype for our worker nodes
+# an up-to-date Linux machine template, with no YD agent
+ancestor_name: 'debian0'
+ancestor_id:   '199'
+
+# YellowDog worker pool token
+YD_TOKEN: 'f3ee7ba0-42cb-4945-b350-92a8e66df1ce'

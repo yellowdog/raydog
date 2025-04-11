@@ -1,0 +1,125 @@
+---
+- hosts: proxmox_server
+  vars_files:
+    - ../vars.yml    
+  tasks:
+  - include_tasks: create_one_server.yml
+    loop: "{{ groups['ray_nodes']|flatten(levels=1) }}"
+    loop_control:
+       index_var: index
+
+- name: Install Ray on all nodes
+  hosts: ray_nodes
+  vars_files:
+    - ../vars.yml    
+  gather_facts: true
+
+  tasks:
+  - name: Get the latest versions of everything
+    ansible.builtin.apt:
+      update_cache: yes
+      upgrade: yes
+      lock_timeout: 300
+
+  - name: Install the basic packages we need
+    ansible.builtin.apt:
+      name: 
+      - unzip
+      - bash-builtins
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-dev
+      state: present
+      lock_timeout: 300
+
+  - name:  Install Ray 
+    ansible.builtin.pip: 
+      name: 
+      - ray
+      - ray[client]
+      virtualenv: /opt/yellowdog/agent/venv
+      virtualenv_command : python3 -m venv
+
+- name: Configure the YellowDog agent to run Ray
+  hosts: ray_nodes
+  vars_files:
+    - ../vars.yml    
+  gather_facts: true
+
+  tasks:
+  - name: Download the Yellowdog agent installer script
+    get_url:
+      url: "https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh"
+      dest: "/tmp/yd-agent-installer.sh"
+      mode: a+x
+
+  - name: Install the YellowDog agent 
+    ansible.builtin.shell: 
+      cmd: /tmp/yd-agent-installer.sh 
+      creates: /opt/yellowdog/agent/application.yaml
+    environment:
+      YD_CONFIGURED_WP: "TRUE"
+      YD_TOKEN: "{{ YD_TOKEN }}"
+      YD_REGION: "Sussex-West"
+      YD_INSTANCE_TYPE: "Proxmox LXC"
+      YD_WORKER_TARGET_COUNT: 1
+
+  - name:  Setup the YD tasks for creating Ray nodes
+    ansible.builtin.blockinfile: 
+      path:  /opt/yellowdog/agent/application.yaml
+      block: "  - name: ray-head\n    run:  /opt/yellowdog/agent/start-ray-head.sh\n  - name: ray-worker\n    run:  /opt/yellowdog/agent/start-ray-worker.sh\n"
+      insertafter: "^yda.taskTypes:"
+
+  - name:  Use customised start.sh to insert IP address into applaition.yaml
+    ansible.builtin.copy:
+      src: start.sh
+      dest: /opt/yellowdog/agent
+      owner: yd-agent 
+      group: yd-agent 
+      mode: u+x
+
+  - name:  Copy YD script that launches the Ray head node
+    ansible.builtin.copy:
+      src: start-ray-head.sh
+      dest: /opt/yellowdog/agent
+      owner: yd-agent 
+      group: yd-agent 
+      mode: u+x
+
+  - name:  Copy YD script that launches Ray worker nodes
+    ansible.builtin.copy:
+      src: start-ray-worker.sh
+      dest: /opt/yellowdog/agent
+      owner: yd-agent 
+      group: yd-agent 
+      mode: u+x
+
+- name: Stop the YD agent on the head node
+  hosts: ray_head
+  gather_facts: false
+  tasks:
+  - name: Stop the YellowDog agent
+    ansible.builtin.systemd_service: 
+      name: yd-agent
+      state: stopped
+      enabled: no
+
+- name: Start the YD agent on worker nodes
+  hosts: ray_workers
+  gather_facts: false
+  tasks:
+  - name: Restart the YellowDog agent
+    ansible.builtin.systemd_service: 
+      name: yd-agent
+      state: restarted
+      enabled: yes
+
+
+
+  # - name: Use shell script to setup node
+  #   ansible.builtin.script:
+  #     cmd: setup-ray-node.sh
+  #     creates: /opt/yellowdog/agent/application.yaml
+
+
