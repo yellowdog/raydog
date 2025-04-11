@@ -9,11 +9,12 @@ from typing import Optional
 
 from yellowdog_client import PlatformClient
 from yellowdog_client.model import ServicesSchema, ApiKey
-from yellowdog_client.model import RunSpecification
-from yellowdog_client.model import Task
-from yellowdog_client.model import TaskGroup, TaskStatus
-from yellowdog_client.model import WorkRequirement
+from yellowdog_client.model import WorkRequirement, RunSpecification, Task, TaskGroup
+from yellowdog_client.model import NodeSearch, NodeStatus, TaskStatus, WorkerStatus
 
+def fatal_error(msg):
+    print("ERROR", msg)
+    sys.exit(-1)
 
 class RayDog:
     def __init__(self):
@@ -95,18 +96,36 @@ class RayDog:
 
         # wait for the head node to start
         headid = newtasks[0].id
-        self._wait_for_task(headid)
+        headtask = self._wait_for_task(headid)
 
+        # and read it's IP address
+        headip = self._get_ip_address(headtask.workerId)
+        print("head node IP address:", headip)
+
+    def _get_ip_address(self, workerid):
+        # find the all the nodes that could be hosting the worker
+        candidates = self.ydclient.worker_pool_client.find_nodes(NodeSearch(
+            statuses=[ NodeStatus.RUNNING ],
+            workerStatuses=[ WorkerStatus.DOING_TASK ]
+            # TODO: find some other parameters that will narrow the search
+        ))
+
+        # look for the one that we need
+        for node in candidates:
+            for worker in node.workers:
+                if worker.id == workerid:
+                    return node.details.publicIpAddress
+                                
+        fatal_error("Failed to find host of worker", workerid)
 
     def _wait_for_task(self, taskid):
         while True:
             info = self.ydworkapi.get_task_by_id(taskid)
-            #print(info)
+            print("Waiting for head node to start")
             if info.status in [ TaskStatus.EXECUTING ]:
                 # TODO ... think about all the other Task statuses
                 return info
             time.sleep(2)
-
 
     def shutdown(self):
         # shutdown all the worker nodes
@@ -116,10 +135,3 @@ class RayDog:
         # cancel the work requireemnt
         self.ydworkapi.cancel_work_requirement_by_id(self.workreq.id)
 
-
-    # find the 
-    def connect_head_node(self):
-        pass
-
-    def entity_name(self):
-        return self.namespace + "-" + self._su.uuid()
