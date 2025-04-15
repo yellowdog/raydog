@@ -29,8 +29,8 @@ class RayDogHead(RayDog):
         headtask = self._wait_for_task(headid)
 
         # get the head node's IP address
-        self.headip = self._get_ip_address(headtask.workerId)
-        print("head node IP address:", self.headip)
+        self.publicip, self.privateip = self._get_ip_address(headtask.workerId)
+        print("Head node IP private address:", self.privateip)
 
 
     def add_workers(self, howmany=1):
@@ -41,10 +41,11 @@ class RayDogHead(RayDog):
         for n in range(0, howmany):
             self.workerid += 1
             tasklist.append(Task(
-                name = "ray-worker-" + str(self.workerid),
+                name = self._get_worker_name(self.workerid),
                 taskType = "ray-worker",
                 environment = {
-                    "YD_RAY_HEAD_NODE" : self.headip,
+                    "YD_RAY_HEAD_NODE" : self.privateip,
+                    "YD_RAY_PORT":       self.ray_port,
                     "YD_CLUSTER_ID" :    self.clusterid
                 }
             ))
@@ -53,9 +54,14 @@ class RayDogHead(RayDog):
         newtasks = self.ydworkapi.add_tasks_to_task_group(
             self._get_worker_task_group(), 
             tasklist)
-        
 
+        # wait for all the workers to start up
+        for thetask in newtasks:
+            print(f"Waiting for {thetask.name} to start")
+            self._wait_for_task(thetask.id)
 
+    def _get_worker_name(self, n):
+        return "ray-worker-" + str(n)
 
     def del_workers(self):
         pass

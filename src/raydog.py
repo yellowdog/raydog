@@ -19,9 +19,12 @@ class RayDog:
 
         # read the configuration from the env variables
         self.verbose = True if os.getenv("VERBOSE") else False
+
         self.api_url = os.getenv("YD_API_URL")
         self.api_key_id = os.getenv("YD_API_KEY_ID")
         self.api_key_secret = os.getenv("YD_API_KEY_SECRET")
+
+        self.ray_port = os.getenv("YD_RAY_PORT", "6379")
 
         # if there is a cluster id in the environment, use it
         self.clusterid = os.getenv("YD_CLUSTER_ID")
@@ -62,15 +65,18 @@ class RayDog:
         for node in candidates:
             for worker in node.workers:
                 if worker.id == workerid:
-                    return node.details.publicIpAddress
+                    return ( node.details.publicIpAddress, node.details.privateIpAddress )
                                 
-        RayDog.fatal_error("Failed to find host of worker", workerid)
+        RayDog.fatal_error("Failed to find host for YD worker", workerid)
 
     def _wait_for_task(self, taskid):
+        print(f"Waiting for {taskid} to start")
         while True:
             info = self.ydworkapi.get_task_by_id(taskid)
-            print("Waiting for head node to start")
+            print(f"Task status: {info.status}")
             if info.status in [ TaskStatus.EXECUTING ]:
                 # TODO ... think about all the other Task statuses
                 return info
-            time.sleep(2)
+            #print("Waiting for node to start")
+            time.sleep(5)
+    
