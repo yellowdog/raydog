@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
-import ray
-import time
 import random
+import time
+
+import ray
 
 from raydogclient import *
 from raydoghead import *
+
 
 def main():
     raydog = RayDogClient()
@@ -25,6 +27,7 @@ def main():
     finally:
         raydog.shutdown()
 
+
 def hello_ray(raycluster):
     print("Connecting Ray to", raycluster)
 
@@ -42,7 +45,7 @@ def hello_ray(raycluster):
 
     # Split data into chunks
     CHUNK_SIZE = 2
-    chunks = [DATA[i:i + CHUNK_SIZE] for i in range(0, len(DATA), CHUNK_SIZE)]
+    chunks = [DATA[i : i + CHUNK_SIZE] for i in range(0, len(DATA), CHUNK_SIZE)]
 
     # Process data in parallel
     futures = [process_data.remote(chunk) for chunk in chunks]
@@ -60,6 +63,3 @@ def hello_ray(raycluster):
 # call the main function
 if __name__ == "__main__":
     main()
-
-
-

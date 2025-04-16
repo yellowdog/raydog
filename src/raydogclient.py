@@ -1,14 +1,19 @@
-import dotenv
-import sys
 from datetime import timedelta
 
-from yellowdog_client.model import ComputeRequirementTemplateUsage
-from yellowdog_client.model import ProvisionedWorkerPoolProperties
-from yellowdog_client.model import AutoShutdown
-
-from yellowdog_client.model import WorkRequirement, RunSpecification, Task, TaskGroup
+import dotenv
+from yellowdog_client.model import (
+    AutoShutdown,
+    ComputeRequirementTemplateUsage,
+    ProvisionedWorkerPoolProperties,
+    RunSpecification,
+    Task,
+    TaskGroup,
+    TaskOutput,
+    WorkRequirement,
+)
 
 from raydog import RayDog
+
 
 class RayDogClient(RayDog):
     def __init__(self):
@@ -18,51 +23,55 @@ class RayDogClient(RayDog):
         self.workreq = None
 
         # most setup is done in the base class
-        super().__init__() 
+        super().__init__()
 
     def start_head_node(self):
         print("Telling YellowDog to create head node")
 
         # create a work requirement
         workreq = WorkRequirement(
-            namespace = self.namespace,
-            name = self._get_wr_name(),
-
-            taskGroups = [
+            namespace=self.namespace,
+            name=self._get_wr_name(),
+            taskGroups=[
                 TaskGroup(
-                    name = "head-tg-" + self.clusterid,
+                    name="head-tg-" + self.clusterid,
                     runSpecification=RunSpecification(
                         taskTypes=["ray-head"],
                         maxWorkers=1,
-                        maximumTaskRetries=5,
-                        workerTags=self.workertags
-                    )
+                        maximumTaskRetries=0,
+                        workerTags=self.workertags,
+                        exclusiveWorkers=True,
+                    ),
                 ),
                 TaskGroup(
-                    name = "worker-tg-" + self.clusterid,
+                    name="worker-tg-" + self.clusterid,
                     runSpecification=RunSpecification(
                         taskTypes=["ray-worker"],
-                        maximumTaskRetries=5,
-                        workerTags=self.workertags
-                    )
-                )
-           ]
+                        maximumTaskRetries=2,
+                        workerTags=self.workertags,
+                        exclusiveWorkers=True,
+                    ),
+                ),
+            ],
         )
         self.workreq = self.ydworkapi.add_work_requirement(workreq)
 
         # add a YellowDog task for the head node
         headtask = Task(
-            name = "ray-head",
-            taskType = "ray-head",
-            environment = {
-                "YD_API_URL" :        self.api_url, 
-                "YD_API_KEY_ID" :     self.api_key_id,
-                "YD_API_KEY_SECRET" : self.api_key_secret,
-                "YD_RAY_PORT":        self.ray_port,
-                "YD_CLUSTER_ID" :     self.clusterid
-            }
+            name="ray-head",
+            taskType="ray-head",
+            environment={
+                "YD_API_URL": self.api_url,
+                "YD_API_KEY_ID": self.api_key_id,
+                "YD_API_KEY_SECRET": self.api_key_secret,
+                "YD_RAY_PORT": self.ray_port,
+                "YD_CLUSTER_ID": self.clusterid,
+            },
+            outputs=[TaskOutput.from_task_process()],
         )
-        newtasks = self.ydworkapi.add_tasks_to_task_group(self._get_head_task_group(), [headtask])
+        newtasks = self.ydworkapi.add_tasks_to_task_group(
+            self._get_head_task_group(), [headtask]
+        )
 
         # wait for the head node to start
         print("Waiting for the head node")
@@ -72,7 +81,7 @@ class RayDogClient(RayDog):
         publicip, privateip = self._get_ip_address(headtask.workerId)
         print("Head node IP address:", publicip)
 
-        #return f"ray://{publicip}:{self.ray_port}"
+        # return f"ray://{publicip}:{self.ray_port}"
         return f"ray://{publicip}:10001"
 
     def shutdown(self):
@@ -87,10 +96,14 @@ class RayDogClient(RayDog):
         # TODO: make all of this configurable
 
         crtname = "yd-demo-aws-eu-west-2-split-ondemand"
-        crt = self.ydclient.compute_client.get_compute_requirement_template_by_name("yd-demo", crtname)
+        crt = self.ydclient.compute_client.get_compute_requirement_template_by_name(
+            "yd-demo", crtname
+        )
 
-        imgname = "ubuntu-24-04-amd64"
-        imggrp = self.ydclient.images_client.get_latest_image_group_by_family_name("yd-demo", imgname)
+        imgname = "ubuntu-22-04-aws-amd64"
+        imggrp = self.ydclient.images_client.get_latest_image_group_by_family_name(
+            "yd-demo", imgname
+        )
 
         self.worker_pool = self.ydclient.worker_pool_client.provision_worker_pool(
             ComputeRequirementTemplateUsage(
@@ -98,8 +111,8 @@ class RayDogClient(RayDog):
                 imagesId=imggrp.id,
                 requirementNamespace=self.namespace,
                 requirementName="wp-" + self.clusterid,
-                userData=RayDogClient.setupscript,
-                targetInstanceCount=1
+                userData=RayDogClient.setup_script,
+                targetInstanceCount=1,
             ),
             ProvisionedWorkerPoolProperties(
                 nodeBootTimeout=timedelta(seconds=300),
@@ -107,121 +120,103 @@ class RayDogClient(RayDog):
                 idlePoolShutdown=AutoShutdown(timeout=timedelta(seconds=300)),
                 minNodes = 0,
                 maxNodes = 10,
-                workerTag="raydog"
-            )
+                workerTag="raydog",
+            ),
         )
 
-    setupscript = """#!/usr/bin/bash
+    setup_script = r"""#!/usr/bin/bash
 
 set -euo pipefail
 
-# Add public SSH key for YD agent user
-YD_AGENT_USER=yd-agent
-YD_AGENT_HOME=/opt/yellowdog/agent
-YD_AGENT_SSH=$YD_AGENT_HOME/.ssh
-
-useradd -m -d $YD_AGENT_HOME -s /usr/bin/bash $YD_AGENT_USER 
-mkdir -p $YD_AGENT_SSH
-chmod og-rwx $YD_AGENT_SSH
-
-# Insert the required public key below
-cat >> $YD_AGENT_SSH/authorized_keys << EOM
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMjp31n7ztJ2nB6Hm1i67ePowqhEDLnX21cGraTZ2TaO winston@Winstons-MacBook-Pro.local
-EOM
-
-chmod og-rw $YD_AGENT_SSH/authorized_keys
-chown -R yd-agent:yd-agent $YD_AGENT_SSH
-
-# Add the YD agent user to passwordless sudoers
-usermod -aG sudo $YD_AGENT_USER
-echo -e "yd-agent\tALL=(ALL)\tNOPASSWD: ALL" > \
-        /etc/sudoers.d/020-yd-agent
-
-# Install the packages we need
-export DEBIAN_FRONTEND=noninteractive
-apt update 
-# apt upgrade 
-apt install -y unzip bash-builtins python3 python3-pip python3-dev python3-venv wget
-
-# Download the YD installer script
-cd /root
+# Download the Agent installer script
+cd /root || exit
 wget https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh
 
-# Run the YD installer
+# Run the Agent installer script
 bash yd-agent-installer.sh
 
-# Create a Python virtual env 
-VENV=/opt/yellowdog/agent/venv
+################################################################################
 
+YD_AGENT_USER="yd-agent"
+YD_AGENT_HOME="/opt/yellowdog/agent"
+
+ADMIN_GRP="sudo"
+
+echo "Adding $YD_AGENT_USER to passwordless sudoers"
+usermod -aG $ADMIN_GRP $YD_AGENT_USER
+echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
+        /etc/sudoers.d/020-$YD_AGENT_USER
+
+################################################################################
+
+echo "Adding public SSH key for $YD_AGENT_USER"
+
+SSH_USER=$YD_AGENT_USER
+SSH_USER_HOME=$YD_AGENT_HOME
+
+mkdir -p $SSH_USER_HOME/.ssh
+chmod og-rwx $SSH_USER_HOME/.ssh
+
+# Insert the required public key below
+cat >> $SSH_USER_HOME/.ssh/authorized_keys << EOM
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDBAwA8lQurxJh2m9zyB6A/QG7/0jRYQQgH0zJg\
+Tr8+uGdYJs4hpbsU43jqfdiOY9gBN35j2LFfHHsYxJmFkFXh2DQn3+WZhzxYzPOiSIBtNnHmRY3j\
+71wJbNUX1kF4VyifiaiuPviJd0YKD/y0UnhZKBs4EQQB9qPzpcSoixcLa6hgh5gqY8yA+BuI4dgK\
+5SG2t5seujJ45bT67HvCeFYShFXPsvB9KwhptBF1Hd961+AoXO8IVXSEKBnrTTecbeFgc0V2vRqO\
+TNdSiWrD71mij3NUd3dzp+9qepDZaNtNXMJ8jnF2nzk43JvrRzteWJlyya+63/bvdq/jj7jLH3tN\
+pcyNw16YmctpjKr7uKc4k6gEa3b7YaELwX8g1xGQib95RXuzvef7qduDAbQbvadbvM97iohaeWMM\
+7uh1rNM6qsVdyGd1FUVNFiPUqsQ5sQhRdnryu/lF10hDArGkhu+tmwQEFsp2ymFlaVexKWB/Q20q\
+A0bE4yNXbZF4WUdBJzc= pwt@pwt-mbp-14.local
+EOM
+
+chmod og-rw $SSH_USER_HOME/.ssh/authorized_keys
+chown -R $SSH_USER:$SSH_USER $SSH_USER_HOME/.ssh
+
+################################################################################
+
+echo "Installing packages ..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+# apt-get upgrade
+apt-get install -y unzip bash-builtins python3 python3-pip python3-dev python3-venv wget
+
+echo "Creating Python virtual env."
+VENV=/opt/yellowdog/agent/venv
 python3 -m venv $VENV
 VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
-# Install Ray
+echo "Installing Ray"
 pip install ray ray[client]
 
-# Create the script used to run Ray workers
+echo "Creating Ray worker start script"
 cat > /opt/yellowdog/agent/start-ray-worker.sh << 'EOT'
 #!/usr/bin/bash
-
+trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
-
 VENV=/opt/yellowdog/agent/venv
-
 VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
-
-# shut down Ray when this script is interrupted
-trap "ray stop; echo Ray stopped" EXIT
-trap "echo Quitting; exit 0" TERM INT
-
-# start ray
-ray start --disable-usage-stats --address=$YD_RAY_HEAD_NODE:6379
-
-# keep the task alive until it is killed
-if [[ -e /usr/lib/bash/sleep ]] ; then
-    # if the sleep command from the bash-builtins package is available, use it
-    enable sleep
-    while true; do sleep 10000; done
-else
-    # we have to spin more with the external sleep command, because SIGTERM won't 
-    # get processed until after sleep exits
-    while true; do sleep 10; done
-fi
+ray start --disable-usage-stats --address=$YD_RAY_HEAD_NODE:6379 --block
 EOT
+
 chmod a+x /opt/yellowdog/agent/start-ray-worker.sh
 chown yd-agent:yd-agent /opt/yellowdog/agent/start-ray-worker.sh
 
-# Change the script to be able to run the Ray head node
+echo "Creating Ray head node startup script"
 cp /opt/yellowdog/agent/start-ray-worker.sh /opt/yellowdog/agent/start-ray-head.sh
-sed -i "/^ray start/c\ray start --disable-usage-stats --head --port=6379"  "/opt/yellowdog/agent/start-ray-head.sh"
+sed -i "/^ray start/c\ray start --disable-usage-stats --head --port=6379 --block"  \
+    "/opt/yellowdog/agent/start-ray-head.sh"
 
-# Setup the YellowDog tasks that run Ray
-cat > setup-yd-task.py << 'EOT'
-#!/usr/bin/env python3
-import sys
+echo "Inserting the YellowDog task types for starting a Ray head node and worker nodes"
+sed -i '/^yda.taskTypes:/a\  - name: "ray-head"\n    run: "/opt/yellowdog/agent/start-ray-head.sh"' \
+    $YD_AGENT_HOME/application.yaml
+sed -i '/^yda.taskTypes:/a\  - name: "ray-worker"\n    run: "/opt/yellowdog/agent/start-ray-worker.sh"' \
+    $YD_AGENT_HOME/application.yaml
 
-config_file = "/opt/yellowdog/agent/application.yaml"
+echo "Disabling firewall"
+ufw disable &> /dev/null
 
-with open(config_file, "r") as f:
-    inp = f.readlines()
-
-outp = []
-for line in inp:
-    outp.append(line)
-    if line.startswith('yda.taskTypes:'):
-        outp.append('  - name: ' + sys.argv[1] + '\n')
-        outp.append('    run: '  + sys.argv[2] + '\n')
-
-with open(config_file, "w") as f:
-    f.writelines(outp)
-EOT
-chmod a+x setup-yd-task.py
-
-./setup-yd-task.py ray-head   "/opt/yellowdog/agent/start-ray-head.sh"
-./setup-yd-task.py ray-worker "/opt/yellowdog/agent/start-ray-worker.sh"
-
-# Restart the agent
+echo "Restarting the agent"
 systemctl --no-block restart yd-agent.service
 """
-

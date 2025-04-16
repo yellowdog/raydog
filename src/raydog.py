@@ -1,11 +1,18 @@
 import os
-import shortuuid
 import sys
 import time
 
+import shortuuid
 from yellowdog_client import PlatformClient
-from yellowdog_client.model import ServicesSchema, ApiKey
-from yellowdog_client.model import NodeSearch, NodeStatus, TaskStatus, WorkerStatus
+from yellowdog_client.model import (
+    ApiKey,
+    NodeSearch,
+    NodeStatus,
+    ServicesSchema,
+    TaskStatus,
+    WorkerStatus,
+)
+
 
 class RayDog:
     @classmethod
@@ -15,7 +22,7 @@ class RayDog:
 
     def __init__(self):
         self.namespace = "raydog"
-        self.workertags = [ "raydog", "onpremise-winston" ]
+        self.workertags = ["raydog"]
 
         # read the configuration from the env variables
         self.verbose = True if os.getenv("VERBOSE") else False
@@ -30,43 +37,45 @@ class RayDog:
         self.clusterid = os.getenv("YD_CLUSTER_ID")
         if not self.clusterid:
             # otherwise create one
-            shortuuid.set_alphabet('0123456789abcdefghijklmnopqrstuvwxyz')
+            shortuuid.set_alphabet("0123456789abcdefghijklmnopqrstuvwxyz")
             self.clusterid = shortuuid.uuid()
-            os.environ["YD_CLUSTER_ID"] = self.clusterid 
-     
+            os.environ["YD_CLUSTER_ID"] = self.clusterid
+
         # connect to YellowDog
         self.ydclient = PlatformClient.create(
             ServicesSchema(defaultUrl=self.api_url),
-            ApiKey(self.api_key_id, self.api_key_secret)
+            ApiKey(self.api_key_id, self.api_key_secret),
         )
         self.ydworkapi = self.ydclient.work_client
 
         self.headnode = None
-        self.workers  = []
+        self.workers = []
 
     def _get_wr_name(self):
         return "wr-" + self.clusterid
-    
+
     def _get_head_task_group(self):
         return self.workreq.taskGroups[0]
-    
+
     def _get_worker_task_group(self):
         return self.workreq.taskGroups[1]
-    
+
     def _get_ip_address(self, workerid):
         # find the all the nodes that could be hosting the worker
-        candidates = self.ydclient.worker_pool_client.find_nodes(NodeSearch(
-            statuses=[ NodeStatus.RUNNING ],
-            workerStatuses=[ WorkerStatus.DOING_TASK ]
-            # TODO: find some other parameters that will narrow the search
-        ))
+        candidates = self.ydclient.worker_pool_client.find_nodes(
+            NodeSearch(
+                statuses=[NodeStatus.RUNNING],
+                workerStatuses=[WorkerStatus.DOING_TASK],
+                # TODO: find some other parameters that will narrow the search
+            )
+        )
 
         # look for the one that we need
         for node in candidates:
             for worker in node.workers:
                 if worker.id == workerid:
-                    return ( node.details.publicIpAddress, node.details.privateIpAddress )
-                                
+                    return (node.details.publicIpAddress, node.details.privateIpAddress)
+
         RayDog.fatal_error("Failed to find host for YD worker", workerid)
 
     def _wait_for_task(self, taskid):
@@ -74,9 +83,8 @@ class RayDog:
         while True:
             info = self.ydworkapi.get_task_by_id(taskid)
             print(f"Task status: {info.status}")
-            if info.status in [ TaskStatus.EXECUTING ]:
+            if info.status in [TaskStatus.EXECUTING]:
                 # TODO ... think about all the other Task statuses
                 return info
-            #print("Waiting for node to start")
+            # print("Waiting for node to start")
             time.sleep(5)
-    
