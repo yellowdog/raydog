@@ -116,8 +116,8 @@ class RayDogClient(RayDog):
             ),
             ProvisionedWorkerPoolProperties(
                 nodeBootTimeout=timedelta(seconds=300),
-                idleNodeShutdown=AutoShutdown(timeout=timedelta(seconds=300)),
-                idlePoolShutdown=AutoShutdown(timeout=timedelta(seconds=300)),
+                idleNodeShutdown=AutoShutdown(timeout=timedelta(seconds=60)),
+                idlePoolShutdown=AutoShutdown(timeout=timedelta(seconds=60)),
                 minNodes = 0,
                 maxNodes = 10,
                 workerTag="raydog",
@@ -136,19 +136,17 @@ wget https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent
 bash yd-agent-installer.sh
 
 ################################################################################
-
 YD_AGENT_USER="yd-agent"
 YD_AGENT_HOME="/opt/yellowdog/agent"
 
-ADMIN_GRP="sudo"
-
 echo "Adding $YD_AGENT_USER to passwordless sudoers"
+
+ADMIN_GRP="sudo"
 usermod -aG $ADMIN_GRP $YD_AGENT_USER
 echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
         /etc/sudoers.d/020-$YD_AGENT_USER
 
 ################################################################################
-
 echo "Adding public SSH key for $YD_AGENT_USER"
 
 mkdir -p $YD_AGENT_HOME/.ssh
@@ -171,23 +169,30 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.ssh
 
 ################################################################################
 
-echo "Installing packages ..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-# apt-get upgrade
-apt-get install -y unzip bash-builtins python3 python3-pip python3-dev python3-venv wget
+echo "Installing 'uv'"
+export HOME=$YD_AGENT_HOME
+curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
+source $HOME/.local/bin/env
 
-echo "Creating Python virtual env."
-VENV=/opt/yellowdog/agent/venv
-python3 -m venv $VENV
+PYTHON_VERSION="3.12.10"
+echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
+VENV=$YD_AGENT_HOME/venv
+uv venv --python $PYTHON_VERSION $VENV
 VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
 echo "Installing Ray"
-pip install ray ray[client]
+uv pip install ray[client]
 
-echo "Creating Ray worker startup script"
-cat > /opt/yellowdog/agent/start-ray-worker.sh << 'EOT'
+echo "Setting file/directory ownership to $YD_AGENT_USER"
+chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.local $VENV $YD_AGENT_HOME/.cache
+
+################################################################################
+WORKER_SCRIPT="$YD_AGENT_HOME/start-ray-worker.sh"
+HEAD_SCRIPT="$YD_AGENT_HOME/start-ray-head.sh"
+
+echo "Creating Ray worker startup script $WORKER_SCRIPT"
+cat > $WORKER_SCRIPT << 'EOT'
 #!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
@@ -197,23 +202,22 @@ source $VENV/bin/activate
 ray start --disable-usage-stats --address=$YD_RAY_HEAD_NODE:6379 --block
 EOT
 
-chmod a+x /opt/yellowdog/agent/start-ray-worker.sh
-chown yd-agent:yd-agent /opt/yellowdog/agent/start-ray-worker.sh
+chmod a+x $WORKER_SCRIPT
+chown $YD_AGENT_USER:$YD_AGENT_USER $WORKER_SCRIPT
 
-echo "Creating Ray head node startup script"
-cp /opt/yellowdog/agent/start-ray-worker.sh /opt/yellowdog/agent/start-ray-head.sh
+echo "Creating Ray head node startup script $HEAD_SCRIPT"
+cp $WORKER_SCRIPT $HEAD_SCRIPT
 sed -i "/^ray start/c\ray start --disable-usage-stats --head --port=6379 --block"  \
-    "/opt/yellowdog/agent/start-ray-head.sh"
+    $HEAD_SCRIPT
 
 echo "Inserting the YellowDog task types for starting a Ray head node and worker nodes"
-sed -i '/^yda.taskTypes:/a\  - name: "ray-head"\n    run: "/opt/yellowdog/agent/start-ray-head.sh"' \
+sed -i "/^yda.taskTypes:/a\  - name: \"ray-head\"\n    run: \"$HEAD_SCRIPT\"" \
     $YD_AGENT_HOME/application.yaml
-sed -i '/^yda.taskTypes:/a\  - name: "ray-worker"\n    run: "/opt/yellowdog/agent/start-ray-worker.sh"' \
+sed -i "/^yda.taskTypes:/a\  - name: \"ray-worker\"\n    run: \"$WORKER_SCRIPT\"" \
     $YD_AGENT_HOME/application.yaml
 
 echo "Disabling firewall"
 ufw disable &> /dev/null
 
-echo "Restarting the agent"
-systemctl --no-block restart yd-agent.service
+# Note: the Agent configuration script will restart the Agent
 """
