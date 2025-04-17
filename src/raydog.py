@@ -6,11 +6,8 @@ import shortuuid
 from yellowdog_client import PlatformClient
 from yellowdog_client.model import (
     ApiKey,
-    NodeSearch,
-    NodeStatus,
     ServicesSchema,
     TaskStatus,
-    WorkerStatus,
 )
 
 
@@ -61,22 +58,17 @@ class RayDog:
         return self.workreq.taskGroups[1]
 
     def _get_ip_address(self, workerid):
-        # find the all the nodes that could be hosting the worker
-        candidates = self.ydclient.worker_pool_client.find_nodes(
-            NodeSearch(
-                statuses=[NodeStatus.RUNNING],
-                workerStatuses=[WorkerStatus.DOING_TASK],
-                # TODO: find some other parameters that will narrow the search
+        """
+        Derive the node ID from the worker ID, and return
+        the public, private IP addresses.
+        """
+        try:
+            node = self.ydclient.worker_pool_client.get_node_by_id(
+                workerid.replace("wrkr", "node")[:-2]
             )
-        )
-
-        # look for the one that we need
-        for node in candidates:
-            for worker in node.workers:
-                if worker.id == workerid:
-                    return (node.details.publicIpAddress, node.details.privateIpAddress)
-
-        RayDog.fatal_error("Failed to find host for YD worker", workerid)
+            return node.details.publicIpAddress, node.details.privateIpAddress
+        except:
+            RayDog.fatal_error(f"Failed to find host for YD worker {workerid}")
 
     def _wait_for_task(self, taskid):
         print(f"Waiting for {taskid} to start")

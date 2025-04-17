@@ -118,8 +118,8 @@ class RayDogClient(RayDog):
                 nodeBootTimeout=timedelta(seconds=300),
                 idleNodeShutdown=AutoShutdown(timeout=timedelta(seconds=60)),
                 idlePoolShutdown=AutoShutdown(timeout=timedelta(seconds=60)),
-                minNodes = 0,
-                maxNodes = 10,
+                minNodes=0,
+                maxNodes=10,
                 workerTag="raydog",
             ),
         )
