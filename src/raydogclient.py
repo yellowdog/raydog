@@ -151,14 +151,11 @@ echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
 
 echo "Adding public SSH key for $YD_AGENT_USER"
 
-SSH_USER=$YD_AGENT_USER
-SSH_USER_HOME=$YD_AGENT_HOME
-
-mkdir -p $SSH_USER_HOME/.ssh
-chmod og-rwx $SSH_USER_HOME/.ssh
+mkdir -p $YD_AGENT_HOME/.ssh
+chmod og-rwx $YD_AGENT_HOME/.ssh
 
 # Insert the required public key below
-cat >> $SSH_USER_HOME/.ssh/authorized_keys << EOM
+cat >> $YD_AGENT_HOME/.ssh/authorized_keys << EOM
 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDBAwA8lQurxJh2m9zyB6A/QG7/0jRYQQgH0zJg\
 Tr8+uGdYJs4hpbsU43jqfdiOY9gBN35j2LFfHHsYxJmFkFXh2DQn3+WZhzxYzPOiSIBtNnHmRY3j\
 71wJbNUX1kF4VyifiaiuPviJd0YKD/y0UnhZKBs4EQQB9qPzpcSoixcLa6hgh5gqY8yA+BuI4dgK\
@@ -169,8 +166,8 @@ pcyNw16YmctpjKr7uKc4k6gEa3b7YaELwX8g1xGQib95RXuzvef7qduDAbQbvadbvM97iohaeWMM\
 A0bE4yNXbZF4WUdBJzc= pwt@pwt-mbp-14.local
 EOM
 
-chmod og-rw $SSH_USER_HOME/.ssh/authorized_keys
-chown -R $SSH_USER:$SSH_USER $SSH_USER_HOME/.ssh
+chmod og-rw $YD_AGENT_HOME/.ssh/authorized_keys
+chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.ssh
 
 ################################################################################
 
@@ -189,7 +186,7 @@ source $VENV/bin/activate
 echo "Installing Ray"
 pip install ray ray[client]
 
-echo "Creating Ray worker start script"
+echo "Creating Ray worker startup script"
 cat > /opt/yellowdog/agent/start-ray-worker.sh << 'EOT'
 #!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
