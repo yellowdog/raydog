@@ -35,7 +35,7 @@ def main():
         worker_node_userdata=NODE_SETUP_SCRIPT,
     )
 
-    # Build the Ray cluster & emit the public IP address
+    # Build the Ray cluster & emit the private and public IP addresses
     print(raydog_cluster.build(build_timeout=timedelta(seconds=300)))
 
     # Wait, then shut down the Ray cluster
