@@ -19,7 +19,7 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-HEAD_NODE_TASK_SCRIPT = r"""#!/usr/bin/bash
+HEAD_NODE_TASK_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
@@ -27,7 +27,7 @@ source $VENV/bin/activate
 ray start --disable-usage-stats --head --port=6379 --block
 """
 
-WORKER_NODE_TASK_SCRIPT = r"""#!/usr/bin/bash
+WORKER_NODE_TASK_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
@@ -71,7 +71,7 @@ class RayDogCluster:
     ):
 
         self._client = client
-        
+
         auto_shut_down = AutoShutdown(
             enabled=True,
             timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES),
@@ -144,7 +144,7 @@ class RayDogCluster:
         self._head_node_task = Task(
             taskType=TASK_TYPE,
             taskData=(
-                HEAD_NODE_TASK_SCRIPT
+                HEAD_NODE_TASK_SCRIPT_DEFAULT
                 if head_node_task_script is None
                 else head_node_task_script
             ),
@@ -154,7 +154,7 @@ class RayDogCluster:
         self._worker_node_task = Task(
             taskType=TASK_TYPE,
             taskData=(
-                WORKER_NODE_TASK_SCRIPT
+                WORKER_NODE_TASK_SCRIPT_DEFAULT
                 if worker_node_task_script is None
                 else worker_node_task_script
             ),
