@@ -96,19 +96,15 @@ def hello_ray(cluster_address):
     ray.shutdown()
 
 
-
-# bash script used to setup nodes in the RTay cluster
+# bash script used to setup nodes in the Ray cluster
 # this will change, depending on what is pre-installed on the AMI
 NODE_SETUP_SCRIPT = r"""#!/usr/bin/bash
 
 set -euo pipefail
 
-# Download the Agent installer script
+echo "Installing the YellowDog agent"
 cd /root || exit
-wget https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh
-
-# Run the Agent installer script
-bash yd-agent-installer.sh
+curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh | bash &> /dev/null
 
 ################################################################################
 YD_AGENT_USER="yd-agent"
