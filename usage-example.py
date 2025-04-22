@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 
+import ray
+import dotenv
+import time
+import random
+
+
 from datetime import datetime, timedelta
 from os import getenv
-from time import sleep
 
 from yellowdog_client.model import ApiKey, ServicesSchema
 from yellowdog_client.platform_client import PlatformClient
@@ -13,36 +18,87 @@ from raydog.raydog import RayDogCluster
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
 
-    # Configure the Ray cluster
-    raydog_cluster = RayDogCluster(
-        client=PlatformClient.create(
-            ServicesSchema(defaultUrl="https://api.yellowdog.ai"),
-            ApiKey(
-                getenv("YD_VAR_APP_KEY_YELLOWDOG"),
-                getenv("YD_VAR_APP_SECRET_YELLOWDOG"),
+    try:
+        # Read any extra environment variables from a file
+        dotenv.load_dotenv(verbose=True, override=True)
+
+        # Configure the Ray cluster
+        raydog_cluster = RayDogCluster(
+            client=PlatformClient.create(
+                ServicesSchema(defaultUrl=getenv("YD_API_URL")),
+                ApiKey(
+                    getenv("YD_API_KEY_ID"),
+                    getenv("YD_API_KEY_SECRET"),
+                ),
             ),
-        ),
-        cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
-        cluster_namespace="pwt-ray",
-        compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
-        total_node_count=3,  # Total number of nodes including the head node
-        images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
-        cluster_tag="my-ray-tag",
-        userdata=NODE_SETUP_SCRIPT,
-        cluster_timeout=timedelta(seconds=600),
-        worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-spot",
-        worker_node_images_id="ami-0fef583e486727263",
-        worker_node_userdata=NODE_SETUP_SCRIPT,
-    )
+            cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
+            cluster_namespace="pwt-ray",
+            compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
+            total_node_count=11,  # Total number of nodes including the head node
+            images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
+            cluster_tag="my-ray-tag",
+            userdata=NODE_SETUP_SCRIPT,
+            cluster_timeout=timedelta(seconds=600),
+            worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-spot",
+            worker_node_images_id="ami-0fef583e486727263",
+            worker_node_userdata=NODE_SETUP_SCRIPT,
+        )
 
-    # Build the Ray cluster & emit the private and public IP addresses
-    print(raydog_cluster.build(build_timeout=timedelta(seconds=300)))
+        # Build the Ray cluster 
+        print("Creating Ray cluster")
+        private_ip, public_ip = raydog_cluster.build(build_timeout=timedelta(seconds=300))
+        cluster_address = f"ray://{public_ip}:10001"
 
-    # Wait, then shut down the Ray cluster
-    sleep(120)
-    raydog_cluster.shut_down()
+        # Run a simple application on the cluster
+        print("Starting simple Ray application")
+        hello_ray(cluster_address)
+        print("Finished")
+
+        input("Hit enter to shut down cluster ")
+
+    finally:
+        # Make sure the Ray cluster gets shut down
+        raydog_cluster.shut_down()
+
+# simple Ray example
+def hello_ray(cluster_address):
+    print("Connecting Ray to", cluster_address)
+
+    # Initialize Ray
+    ray.init(address=cluster_address)
+
+    # Simulated dataset
+    DATA_SIZE = 1000
+    DATA = [random.randint(1, 100) for _ in range(DATA_SIZE)]
+
+    @ray.remote
+    def process_data(data_chunk):
+        time.sleep(random.uniform(0.1, 0.5))  # Simulate processing time
+        return sum(data_chunk)
+
+    # Split data into chunks
+    CHUNK_SIZE = 4
+    chunks = [DATA[i : i + CHUNK_SIZE] for i in range(0, len(DATA), CHUNK_SIZE)]
+
+    # Process data in parallel
+    futures = [process_data.remote(chunk) for chunk in chunks]
+    results = ray.get(futures)
+
+    total_sum = sum(results)
+
+    print("Processed", len(DATA), "random values")
+    print("In", len(results), "chunks")
+    # print(f"Processed dataset: {DATA}")
+    # print(f"Chunk results: {results}")
+    print(f"Total sum: {total_sum}")
+
+    # Shutdown Ray
+    ray.shutdown()
 
 
+
+# bash script used to setup nodes in the RTay cluster
+# this will change, depending on what is pre-installed on the AMI
 NODE_SETUP_SCRIPT = r"""#!/usr/bin/bash
 
 set -euo pipefail

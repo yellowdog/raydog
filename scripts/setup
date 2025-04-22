@@ -20,8 +20,6 @@ source $VENV/bin/activate
 echo "Setting up environment"
 
 cat > $HERE/../.env <<EOM
-ENV_NAME="prod-demo"
-SSH_PUBLIC_KEY=`cat $HOME/.ssh/id_ed25519.pub`
 YD_API_URL="https://api.yellowdog.ai"
 EOM
 

@@ -2,4 +2,4 @@
 
 set -euo pipefail
 
-./venv/bin/python3 src/test.py
+./venv/bin/python3 usage-example.py
