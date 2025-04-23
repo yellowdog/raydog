@@ -65,6 +65,34 @@ class RayDogCluster:
         worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
         cluster_lifetime: timedelta | None = None,
     ):
+        """
+        Initialise the properties of the RayDog cluster and the Ray head node.
+        
+        :param client: a YellowDog PlatformClient object for connecting to the
+            YellowDog platform.
+        :param cluster_name: a name for the cluster; the name must be unique to the
+            YellowDog account and is used as the basis for the work requirement
+            and worker pool names, and the worker tags.
+        :param cluster_namespace: the YellowDog namespace to use for the cluster.
+        :param head_node_compute_requirement_template_id: the YellowDog
+            compute requirement template ID for the head node.
+        :param cluster_tag: an optional tag to use for the YellowDog work requirement
+            and worker pool(s).
+        :param head_node_images_id: the images ID to use for the head node
+            (if required).
+        :param head_node_userdata: optional userdata for use when the head node instance
+            is provisioned.
+        :param head_node_instance_tags: optional instance tags to use for the head node
+            instance.
+        :param head_node_metrics_enabled: whether to enable metrics collection for the
+            head node.
+        :param head_node_ray_start_script: the Bash script for starting the ray head
+            node.
+        :param worker_node_task_script: the Bash script for starting the ray worker
+            node.
+        :param cluster_lifetime: an optional timeout that will shut down the Ray
+            cluster if it expires.
+        """
 
         self._client = client
         self._cluster_name = cluster_name
@@ -155,7 +183,22 @@ class RayDogCluster:
         worker_node_metrics_enabled: bool | None = None,
     ):
         """
-        Add the data to create a set of worker nodes.
+        Add a worker pool and task group that will provide Ray worker nodes.
+        
+        :param worker_node_compute_requirement_template_id: the YellowDog compute
+            requirement template ID to use for the worker nodes in this worker
+            pool.
+        :param worker_pool_node_count: the number of ray worker nodes to create in
+            this worker pool.
+        :param worker_node_images_id: the images ID to use with the compute
+            requirement template, if required.
+        :param worker_node_userdata: optional userdata for use when the worker node
+            instances are provisioned.
+        :param worker_node_instance_tags: optional instance tags to apply to the
+            worker node instances.
+        :param worker_node_metrics_enabled: whether to enable metrics collection for the
+            worker nodes.
+        :return:
         """
         worker_pool_index = str(len(self._worker_node_worker_pools) + 1).zfill(2)
 
@@ -198,11 +241,15 @@ class RayDogCluster:
         self, head_node_build_timeout: timedelta | None = None
     ) -> (str, str | None):
         """
-        Build the cluster. Returns the private IP, and the public IP of the head node
-        or None.
-
-        Raises TimeoutError if the build_timeout is exceeded before the head node task
-        starts to execute.
+        Build the cluster. This method will block until the Ray head node
+        is ready, but note that Ray worker nodes will still be configuring
+        and joining the cluster.
+        
+        :param head_node_build_timeout: an optional timeout for building the head node;
+            if the timeout expires before the head node task is executing, a TimeoutError
+            exception will be raised.
+        :return: a tuple containing the private IP address of the head node, and the
+            public IP address of the head node (or None).
         """
 
         start_time = datetime.now()

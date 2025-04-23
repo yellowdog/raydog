@@ -117,15 +117,15 @@ def estimate_pi(cluster_address):
     ray.shutdown()
 
 
-# bash script used to setup nodes in the Ray cluster
-# this will change, depending on what is pre-installed on the AMI
+# Example Bash script used to set up nodes in the Ray cluster.
 NODE_SETUP_SCRIPT = r"""#!/usr/bin/bash
 
 set -euo pipefail
 
 echo "Installing the YellowDog agent"
 cd /root || exit
-curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh | bash &> /dev/null
+curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh \
+      | bash &> /dev/null
 
 ################################################################################
 YD_AGENT_USER="yd-agent"
