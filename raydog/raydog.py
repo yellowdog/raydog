@@ -19,7 +19,7 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-HEAD_NODE_TASK_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
+HEAD_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
@@ -27,7 +27,7 @@ source $VENV/bin/activate
 ray start --disable-usage-stats --head --port=6379 --block
 """
 
-WORKER_NODE_TASK_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
+WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
@@ -58,8 +58,8 @@ class RayDogCluster:
         total_node_count: int,
         cluster_tag: str | None = None,
         images_id: str | None = None,
-        head_node_task_script: str | None = None,
-        worker_node_task_script: str | None = None,
+        head_node_ray_start_script: str = HEAD_NODE_RAY_START_SCRIPT_DEFAULT,
+        worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
         userdata: str | None = None,
         instance_tags: dict[str, str] | None = None,
         metrics_enabled: bool | None = None,
@@ -143,21 +143,13 @@ class RayDogCluster:
 
         self._head_node_task = Task(
             taskType=TASK_TYPE,
-            taskData=(
-                HEAD_NODE_TASK_SCRIPT_DEFAULT
-                if head_node_task_script is None
-                else head_node_task_script
-            ),
+            taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
         )
 
         self._worker_node_task = Task(
             taskType=TASK_TYPE,
-            taskData=(
-                WORKER_NODE_TASK_SCRIPT_DEFAULT
-                if worker_node_task_script is None
-                else worker_node_task_script
-            ),
+            taskData=worker_node_task_script,
             arguments=["taskdata.txt"],
         )
 
