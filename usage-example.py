@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 
-import ray
-import dotenv
-import time
 import random
-
-
+import time
 from datetime import datetime, timedelta
 from os import getenv
+from time import sleep
 
+import dotenv
+import ray
 from yellowdog_client.model import ApiKey, ServicesSchema
 from yellowdog_client.platform_client import PlatformClient
 
@@ -33,21 +32,34 @@ def main():
             ),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
             cluster_namespace="pwt-ray",
-            compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
-            total_node_count=11,  # Total number of nodes including the head node
-            images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
+            head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
+            head_node_images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
             cluster_tag="my-ray-tag",
-            userdata=NODE_SETUP_SCRIPT,
-            cluster_timeout=timedelta(seconds=600),
-            worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-spot",
-            worker_node_images_id="ami-0fef583e486727263",
-            worker_node_userdata=NODE_SETUP_SCRIPT,
+            head_node_userdata=NODE_SETUP_SCRIPT,
+            cluster_lifetime=timedelta(seconds=600),
         )
 
-        # Build the Ray cluster 
-        print("Creating Ray cluster")
-        private_ip, public_ip = raydog_cluster.build(build_timeout=timedelta(seconds=300))
+        # Add the worker pools
+        for _ in range(3):
+            raydog_cluster.add_worker_nodes(
+                worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
+                worker_pool_node_count=1,
+                worker_node_images_id="ami-0fef583e486727263",
+                worker_node_userdata=NODE_SETUP_SCRIPT,
+                worker_node_metrics_enabled=True,
+            )
+
+        # Build the Ray cluster
+        print("Building Ray cluster")
+        private_ip, public_ip = raydog_cluster.build(
+            build_timeout=timedelta(seconds=300)
+        )
+
         cluster_address = f"ray://{public_ip}:10001"
+        print(f"Head node started: {cluster_address}")
+
+        print("Pausing to allow all worker nodes to start")
+        sleep(60)
 
         # Run a simple application on the cluster
         print("Starting simple Ray application")
@@ -59,6 +71,7 @@ def main():
     finally:
         # Make sure the Ray cluster gets shut down
         raydog_cluster.shut_down()
+
 
 # simple Ray example
 def hello_ray(cluster_address):
