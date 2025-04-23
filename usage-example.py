@@ -61,7 +61,7 @@ def main():
         print(f"Head node started: {cluster_address}")
 
         print("Pausing to allow all worker nodes to start")
-        sleep(60)
+        sleep(90)
 
         # Run a simple application on the cluster
         print("Starting simple Ray application")

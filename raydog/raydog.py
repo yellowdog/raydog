@@ -70,9 +70,9 @@ class RayDogCluster:
         self._cluster_name = cluster_name
         self._cluster_namespace = cluster_namespace
         self._cluster_tag = cluster_tag
-        self._instance_tags = head_node_instance_tags
-        self._metrics_enabled = head_node_metrics_enabled
         self._cluster_lifetime = cluster_lifetime
+
+        head_node_naming = f"{cluster_name}-00"
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
@@ -82,7 +82,7 @@ class RayDogCluster:
         self._head_node_compute_requirement_template_usage = (
             ComputeRequirementTemplateUsage(
                 templateId=head_node_compute_requirement_template_id,
-                requirementName=f"{cluster_name}-00",
+                requirementName=head_node_naming,
                 requirementNamespace=cluster_namespace,
                 requirementTag=cluster_tag,
                 targetInstanceCount=1,
@@ -97,7 +97,7 @@ class RayDogCluster:
                 createNodeWorkers=NodeWorkerTarget.per_node(1),
                 minNodes=0,
                 maxNodes=1,
-                workerTag=cluster_name,
+                workerTag=head_node_naming,
                 metricsEnabled=head_node_metrics_enabled,
                 idleNodeShutdown=self._auto_shut_down,
                 idlePoolShutdown=self._auto_shut_down,
@@ -126,7 +126,7 @@ class RayDogCluster:
                     finishIfAnyTaskFailed=True,
                     runSpecification=RunSpecification(
                         taskTypes=[TASK_TYPE],
-                        workerTags=[cluster_name],
+                        workerTags=[head_node_naming],
                         namespaces=[cluster_namespace],
                         exclusiveWorkers=True,
                         taskTimeout=cluster_lifetime,
@@ -230,6 +230,7 @@ class RayDogCluster:
         )
         self.work_requirement_id = self._work_requirement.id
 
+        # Add the head node task
         self.head_node_task_id = self._client.work_client.add_tasks_to_task_group_by_id(
             self._work_requirement.taskGroups[0].id,
             [self._head_node_task],
@@ -249,6 +250,7 @@ class RayDogCluster:
                 )
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
 
+        # Set the head node ID get the node details
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
         node: Node = self._client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
