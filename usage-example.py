@@ -4,8 +4,9 @@ import ray
 import dotenv
 import time
 import random
+import logging
 
-
+from fractions import Fraction
 from datetime import datetime, timedelta
 from os import getenv
 
@@ -51,7 +52,7 @@ def main():
 
         # Run a simple application on the cluster
         print("Starting simple Ray application")
-        hello_ray(cluster_address)
+        estimate_pi(cluster_address)
         print("Finished")
 
         input("Hit enter to shut down cluster ")
@@ -61,36 +62,41 @@ def main():
         raydog_cluster.shut_down()
 
 # simple Ray example
-def hello_ray(cluster_address):
+@ray.remote
+def pi4_sample(sample_count):
+    """pi4_sample runs sample_count experiments, and returns the 
+    fraction of random coordinates that are inside a unit circle. 
+    """
+    in_count = 0
+    for i in range(sample_count):
+        x = random.random()
+        y = random.random()
+        if x*x + y*y <= 1:
+            in_count += 1
+    return Fraction(in_count, sample_count)
+
+def estimate_pi(cluster_address):
     print("Connecting Ray to", cluster_address)
 
     # Initialize Ray
-    ray.init(address=cluster_address)
+    ray.init(address=cluster_address, logging_level=logging.ERROR)
 
-    # Simulated dataset
-    DATA_SIZE = 1000
-    DATA = [random.randint(1, 100) for _ in range(DATA_SIZE)]
+    # Get several estimates of pi
+    batches = 100
+    print(f"Getting {batches} estimates of pi")
+    start = time.time() 
 
-    @ray.remote
-    def process_data(data_chunk):
-        time.sleep(random.uniform(0.1, 0.5))  # Simulate processing time
-        return sum(data_chunk)
+    results = []
+    for _ in range(batches):
+        results.append(pi4_sample.remote(1000 * 1000))  
 
-    # Split data into chunks
-    CHUNK_SIZE = 4
-    chunks = [DATA[i : i + CHUNK_SIZE] for i in range(0, len(DATA), CHUNK_SIZE)]
+    output = ray.get(results)
+    mypi = sum(output)*4/len(output)
+    
+    dur = time.time() - start
+    print(f"Estimation took {dur} seconds")
 
-    # Process data in parallel
-    futures = [process_data.remote(chunk) for chunk in chunks]
-    results = ray.get(futures)
-
-    total_sum = sum(results)
-
-    print("Processed", len(DATA), "random values")
-    print("In", len(results), "chunks")
-    # print(f"Processed dataset: {DATA}")
-    # print(f"Chunk results: {results}")
-    print(f"Total sum: {total_sum}")
+    print(f"The average estimate is {mypi} =", float(mypi))
 
     # Shutdown Ray
     ray.shutdown()
