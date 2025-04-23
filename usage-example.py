@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
-import ray
-import dotenv
-import time
-import random
 import logging
-
-from fractions import Fraction
+import random
+import time
 from datetime import datetime, timedelta
+from fractions import Fraction
 from os import getenv
 
+import dotenv
+import ray
 from yellowdog_client.model import ApiKey, ServicesSchema
 from yellowdog_client.platform_client import PlatformClient
 
@@ -45,9 +44,11 @@ def main():
             worker_node_userdata=NODE_SETUP_SCRIPT,
         )
 
-        # Build the Ray cluster 
+        # Build the Ray cluster
         print("Creating Ray cluster")
-        private_ip, public_ip = raydog_cluster.build(build_timeout=timedelta(seconds=300))
+        private_ip, public_ip = raydog_cluster.build(
+            build_timeout=timedelta(seconds=300)
+        )
         cluster_address = f"ray://{public_ip}:10001"
 
         # Run a simple application on the cluster
@@ -61,19 +62,21 @@ def main():
         # Make sure the Ray cluster gets shut down
         raydog_cluster.shut_down()
 
+
 # simple Ray example
 @ray.remote
 def pi4_sample(sample_count):
-    """pi4_sample runs sample_count experiments, and returns the 
-    fraction of random coordinates that are inside a unit circle. 
+    """pi4_sample runs sample_count experiments, and returns the
+    fraction of random coordinates that are inside a unit circle.
     """
     in_count = 0
     for i in range(sample_count):
         x = random.random()
         y = random.random()
-        if x*x + y*y <= 1:
+        if x * x + y * y <= 1:
             in_count += 1
     return Fraction(in_count, sample_count)
+
 
 def estimate_pi(cluster_address):
     print("Connecting Ray to", cluster_address)
@@ -84,15 +87,15 @@ def estimate_pi(cluster_address):
     # Get several estimates of pi
     batches = 100
     print(f"Getting {batches} estimates of pi")
-    start = time.time() 
+    start = time.time()
 
     results = []
     for _ in range(batches):
-        results.append(pi4_sample.remote(1000 * 1000))  
+        results.append(pi4_sample.remote(1000 * 1000))
 
     output = ray.get(results)
-    mypi = sum(output)*4/len(output)
-    
+    mypi = sum(output) * 4 / len(output)
+
     dur = time.time() - start
     print(f"Estimation took {dur} seconds")
 
