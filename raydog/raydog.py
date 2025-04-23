@@ -145,7 +145,7 @@ class RayDogCluster:
         self.worker_node_task_ids: list[str] | None = None
         self.head_node_node_id: str | None = None
 
-    def add_worker_nodes(
+    def add_worker_pool(
         self,
         worker_node_compute_requirement_template_id: str,
         worker_pool_node_count: int,
@@ -194,7 +194,9 @@ class RayDogCluster:
             )
         )
 
-    def build(self, build_timeout: timedelta | None = None) -> (str, str | None):
+    def build(
+        self, head_node_build_timeout: timedelta | None = None
+    ) -> (str, str | None):
         """
         Build the cluster. Returns the private IP, and the public IP of the head node
         or None.
@@ -241,8 +243,8 @@ class RayDogCluster:
             if task.status == TaskStatus.EXECUTING:
                 break
             if (
-                build_timeout is not None
-                and datetime.now() - start_time >= build_timeout
+                head_node_build_timeout is not None
+                and datetime.now() - start_time >= head_node_build_timeout
             ):
                 self.shut_down()
                 raise TimeoutError(

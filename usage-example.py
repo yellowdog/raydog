@@ -43,7 +43,7 @@ def main():
 
         # Add the worker pools
         for _ in range(2):
-            raydog_cluster.add_worker_nodes(
+            raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
                 worker_pool_node_count=2,
                 worker_node_images_id="ami-0fef583e486727263",
@@ -54,7 +54,7 @@ def main():
         # Build the Ray cluster
         print("Building Ray cluster")
         private_ip, public_ip = raydog_cluster.build(
-            build_timeout=timedelta(seconds=300)
+            head_node_build_timeout=timedelta(seconds=300)
         )
 
         cluster_address = f"ray://{public_ip}:10001"
