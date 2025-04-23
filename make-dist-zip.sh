@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Create resources for distribution to Erasmus AI
+# Create resources for distribution
 
 DIST="dist"
 RAYDOG="raydog"
