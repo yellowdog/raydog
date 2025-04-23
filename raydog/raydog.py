@@ -92,14 +92,16 @@ class RayDogCluster:
             )
         )
 
-        self._provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
-            createNodeWorkers=NodeWorkerTarget.per_node(1),
-            minNodes=0,
-            maxNodes=1,
-            workerTag=cluster_name,
-            metricsEnabled=head_node_metrics_enabled,
-            idleNodeShutdown=self._auto_shut_down,
-            idlePoolShutdown=self._auto_shut_down,
+        self._head_node_provisioned_worker_pool_properties = (
+            ProvisionedWorkerPoolProperties(
+                createNodeWorkers=NodeWorkerTarget.per_node(1),
+                minNodes=0,
+                maxNodes=1,
+                workerTag=cluster_name,
+                metricsEnabled=head_node_metrics_enabled,
+                idleNodeShutdown=self._auto_shut_down,
+                idlePoolShutdown=self._auto_shut_down,
+            )
         )
 
         self._head_node_task = Task(
@@ -207,7 +209,7 @@ class RayDogCluster:
         self.head_node_worker_pool_id = (
             self._client.worker_pool_client.provision_worker_pool(
                 self._head_node_compute_requirement_template_usage,
-                self._provisioned_worker_pool_properties,
+                self._head_node_provisioned_worker_pool_properties,
             ).id
         )
         for worker_node_worker_pool in self._worker_node_worker_pools:
