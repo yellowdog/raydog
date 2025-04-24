@@ -25,13 +25,8 @@ def main():
 
         # Configure the Ray cluster
         raydog_cluster = RayDogCluster(
-            client=PlatformClient.create(
-                ServicesSchema(defaultUrl=getenv("YD_API_URL")),
-                ApiKey(
-                    getenv("YD_API_KEY_ID"),
-                    getenv("YD_API_KEY_SECRET"),
-                ),
-            ),
+            yd_application_key_id=getenv("YD_API_KEY_ID"),
+            yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
             cluster_namespace="pwt-ray",
             head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",

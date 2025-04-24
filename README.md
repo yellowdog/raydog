@@ -10,7 +10,7 @@ The implementation and its interface are subject to change as we gather feedback
 
 The [raydog.py](raydog/raydog.py) Python module defines a `RayDogCluster` class.
 
-1. The constructor for the `RayDogCluster` class sets up general cluster properties, and the properties needed to provision a single Ray head node.
+1. The constructor for the `RayDogCluster` class establishes the YellowDog application credentials for accessing the platform, sets up general cluster properties, and sets the properties required to provision a single Ray head node.
 
 
 2. The `add_worker_pool()` method sets the properties and node count for a worker pool supplying Ray worker nodes. This method can be called multiple times to add heterogeneous Ray worker nodes, with different numbers of nodes of each type. This method can be called one or more times before calling the `build()` method, or after it to allow worker pools to be added dynamically to the cluster.

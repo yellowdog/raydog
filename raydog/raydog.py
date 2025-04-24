@@ -8,6 +8,7 @@ from time import sleep
 
 from requests.exceptions import HTTPError
 from yellowdog_client.model import (
+    ApiKey,
     AutoShutdown,
     ComputeRequirementTemplateUsage,
     Node,
@@ -15,6 +16,7 @@ from yellowdog_client.model import (
     ProvisionedWorkerPool,
     ProvisionedWorkerPoolProperties,
     RunSpecification,
+    ServicesSchema,
     Task,
     TaskGroup,
     TaskStatus,
@@ -37,6 +39,8 @@ VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
 """
+
+YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
 HEAD_NODE_TASK_GROUP_NAME = "head-node"
 WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
@@ -62,10 +66,12 @@ class RayDogCluster:
 
     def __init__(
         self,
-        client: PlatformClient,
+        yd_application_key_id: str,
+        yd_application_key_secret: str,
         cluster_name: str,
         cluster_namespace: str,
         head_node_compute_requirement_template_id: str,
+        yd_platform_api_url: str = YD_DEFAULT_API_URL,
         cluster_tag: str | None = None,
         head_node_images_id: str | None = None,
         head_node_userdata: str | None = None,
@@ -77,14 +83,16 @@ class RayDogCluster:
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
 
-        :param client: a YellowDog PlatformClient object for connecting to the
-            YellowDog platform.
+        :param yd_application_key_id: the key ID of the YellowDog application for connecting
+            to the YellowDog platform.
+        :param yd_application_key_secret: the key secret of the YellowDog application.
         :param cluster_name: a name for the cluster; the name must be unique to the
             YellowDog account and is used as the basis for the work requirement
             and worker pool names, and the worker tags.
         :param cluster_namespace: the YellowDog namespace to use for the cluster.
         :param head_node_compute_requirement_template_id: the YellowDog
             compute requirement template ID for the head node.
+        :param yd_platform_api_url: the URL of the YellowDog platform API.
         :param cluster_tag: an optional tag to use for the YellowDog work requirement
             and worker pool(s).
         :param head_node_images_id: the images ID to use for the head node
@@ -101,7 +109,10 @@ class RayDogCluster:
             cluster if it expires.
         """
 
-        self._client = client
+        self._client = PlatformClient.create(
+            ServicesSchema(defaultUrl=yd_platform_api_url),
+            ApiKey(yd_application_key_id, yd_application_key_secret),
+        )
         self._cluster_name = cluster_name
         self._cluster_namespace = cluster_namespace
         self._cluster_tag = cluster_tag
