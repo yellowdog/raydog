@@ -63,7 +63,6 @@ class RayDogCluster:
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
         head_node_ray_start_script: str = HEAD_NODE_RAY_START_SCRIPT_DEFAULT,
-        worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
         cluster_lifetime: timedelta | None = None,
     ):
         """
@@ -88,8 +87,6 @@ class RayDogCluster:
         :param head_node_metrics_enabled: whether to enable metrics collection for the
             head node.
         :param head_node_ray_start_script: the Bash script for starting the ray head
-            node.
-        :param worker_node_task_script: the Bash script for starting the ray worker
             node.
         :param cluster_lifetime: an optional timeout that will shut down the Ray
             cluster if it expires.
@@ -139,12 +136,6 @@ class RayDogCluster:
             arguments=["taskdata.txt"],
         )
 
-        self._worker_node_task = Task(
-            taskType=TASK_TYPE,
-            taskData=worker_node_task_script,
-            arguments=["taskdata.txt"],
-        )
-
         self._work_requirement = WorkRequirement(
             name=cluster_name,
             namespace=cluster_namespace,
@@ -182,6 +173,7 @@ class RayDogCluster:
         worker_node_userdata: str | None = None,
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
+        worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
     ):
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -199,6 +191,8 @@ class RayDogCluster:
             worker node instances.
         :param worker_node_metrics_enabled: whether to enable metrics collection for the
             worker nodes.
+        :param worker_node_task_script: the Bash script for starting the ray worker
+            nodes in this worker pool.
         :return:
         """
 
@@ -238,6 +232,12 @@ class RayDogCluster:
                         exclusiveWorkers=True,
                         taskTimeout=self._cluster_lifetime,
                     ),
+                ),
+                task_prototype=Task(
+                    taskType=TASK_TYPE,
+                    taskData=worker_node_task_script,
+                    arguments=["taskdata.txt"],
+                    environment={},
                 ),
             )
         )
@@ -310,19 +310,18 @@ class RayDogCluster:
             self.head_node_node_id
         )
 
-        # Add the private IP address of the head node to the worker task environment
-        self._worker_node_task.environment = {
-            "RAY_HEAD_NODE_PRIVATE_IP": node.details.privateIpAddress
-        }
-
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, worker_node_worker_pool in enumerate(
             self._worker_node_worker_pools
         ):
+            # Add the private IP address of the head node to the worker task environment
+            worker_node_worker_pool.task_prototype.environment.update(
+                {"RAY_HEAD_NODE_PRIVATE_IP": node.details.privateIpAddress}
+            )
             self._client.work_client.add_tasks_to_task_group_by_id(
                 self._work_requirement.taskGroups[task_group_index + 1].id,
                 [
-                    self._worker_node_task
+                    worker_node_worker_pool.task_prototype
                     for _ in range(
                         worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
                     )
@@ -363,3 +362,4 @@ class WorkerNodeWorkerPool:
     compute_requirement_template_usage: ComputeRequirementTemplateUsage
     provisioned_worker_pool_properties: ProvisionedWorkerPoolProperties
     task_group: TaskGroup
+    task_prototype: Task
