@@ -10,7 +10,7 @@ The implementation and its interface are subject to change as we gather feedback
 
 The [raydog.py](raydog/raydog.py) Python module defines a `RayDogCluster` class.
 
-1. The constructor for the `RayDogCluster` class sets up general cluster properties, and the properties needed to provision a single Ray head node.
+1. The constructor for the `RayDogCluster` class establishes the YellowDog application credentials for accessing the platform, sets up general cluster properties, and sets the properties required to provision a single Ray head node.
 
 
 2. The `add_worker_pool()` method sets the properties and node count for a worker pool supplying Ray worker nodes. This method can be called multiple times to add heterogeneous Ray worker nodes, with different numbers of nodes of each type. This method can be called one or more times before calling the `build()` method, or after it to allow worker pools to be added dynamically to the cluster.
@@ -19,7 +19,10 @@ The [raydog.py](raydog/raydog.py) Python module defines a `RayDogCluster` class.
 3. The `build()` method creates the cluster, and returns the private and (if applicable) public IP addresses of the head node. The method blocks until the head node is running, but note that after it returns, Ray worker nodes will still be in the process of configuring and joining the cluster. A timeout can be set that cancels cluster creation if exceeded while the head node is still being configured.
 
 
-4. The `shut_down()` method shuts down the Ray cluster by cancelling its work requirement, aborting all its tasks representing the head node and worker nodes, and shutting down its worker pools.
+4. The `remove_worker_pool()` method will remove a worker pool by its ID. This causes the compute requirement associated with the worker pool to be terminated immediately, and the worker node tasks running on the nodes will fail. The nodes should be gracefully removed from the Ray cluster, which will keep running. 
+
+
+5. The `shut_down()` method shuts down the Ray cluster by cancelling its work requirement, aborting all the tasks representing the head node and worker nodes, and shutting down all worker pools.
 
 ## Usage Example
 

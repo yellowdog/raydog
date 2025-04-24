@@ -8,12 +8,15 @@ from time import sleep
 
 from requests.exceptions import HTTPError
 from yellowdog_client.model import (
+    ApiKey,
     AutoShutdown,
     ComputeRequirementTemplateUsage,
     Node,
     NodeWorkerTarget,
+    ProvisionedWorkerPool,
     ProvisionedWorkerPoolProperties,
     RunSpecification,
+    ServicesSchema,
     Task,
     TaskGroup,
     TaskStatus,
@@ -36,6 +39,8 @@ VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
 """
+
+YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
 HEAD_NODE_TASK_GROUP_NAME = "head-node"
 WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
@@ -61,10 +66,12 @@ class RayDogCluster:
 
     def __init__(
         self,
-        client: PlatformClient,
+        yd_application_key_id: str,
+        yd_application_key_secret: str,
         cluster_name: str,
         cluster_namespace: str,
         head_node_compute_requirement_template_id: str,
+        yd_platform_api_url: str = YD_DEFAULT_API_URL,
         cluster_tag: str | None = None,
         head_node_images_id: str | None = None,
         head_node_userdata: str | None = None,
@@ -76,14 +83,16 @@ class RayDogCluster:
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
 
-        :param client: a YellowDog PlatformClient object for connecting to the
-            YellowDog platform.
+        :param yd_application_key_id: the key ID of the YellowDog application for connecting
+            to the YellowDog platform.
+        :param yd_application_key_secret: the key secret of the YellowDog application.
         :param cluster_name: a name for the cluster; the name must be unique to the
             YellowDog account and is used as the basis for the work requirement
             and worker pool names, and the worker tags.
         :param cluster_namespace: the YellowDog namespace to use for the cluster.
         :param head_node_compute_requirement_template_id: the YellowDog
             compute requirement template ID for the head node.
+        :param yd_platform_api_url: the URL of the YellowDog platform API.
         :param cluster_tag: an optional tag to use for the YellowDog work requirement
             and worker pool(s).
         :param head_node_images_id: the images ID to use for the head node
@@ -100,7 +109,6 @@ class RayDogCluster:
             cluster if it expires.
         """
 
-        self._client = client
         self._cluster_name = cluster_name
         self._cluster_namespace = cluster_namespace
         self._cluster_tag = cluster_tag
@@ -165,14 +173,20 @@ class RayDogCluster:
 
         self._worker_node_worker_pools: list[WorkerNodeWorkerPool] = []
 
-        # Public properties
+        self._is_shut_down = False
+
+        # Properties publicly available (for reading)
+        self.yd_client = PlatformClient.create(
+            ServicesSchema(defaultUrl=yd_platform_api_url),
+            ApiKey(id=yd_application_key_id, secret=yd_application_key_secret),
+        )
+        self.work_requirement_id: str | None = None
         self.head_node_worker_pool_id: str | None = None
         self.head_node_node_id: str | None = None
         self.head_node_private_ip: str | None = None
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
         self.worker_node_worker_pool_ids: list[str] = []
-        self.work_requirement_id: str | None = None
 
     def add_worker_pool(
         self,
@@ -183,7 +197,7 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
-    ):
+    ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
 
@@ -202,8 +216,14 @@ class RayDogCluster:
             worker nodes.
         :param worker_node_task_script: the Bash script for starting the ray worker
             nodes in this worker pool.
-        :return:
+        :return: returns the worker pool ID if a worker pool was created, or None if the
+            pool will be created later using the build() method.
         """
+
+        if self._is_shut_down:
+            raise Exception(
+                "'add_worker_pool()' method called on already shut-down cluster"
+            )
 
         if worker_pool_node_count < 1:
             raise ValueError("worker_pool_node_count must be > 0")
@@ -252,32 +272,33 @@ class RayDogCluster:
         self._worker_node_worker_pools.append(worker_node_worker_pool)
 
         if self.head_node_private_ip is None:
-            return  # No head node set up yet; wait for build()
+            return None  # No head node set up yet; wait for build()
 
         # Provision the new worker pool
-        self.worker_node_worker_pool_ids.append(
-            self._client.worker_pool_client.provision_worker_pool(
-                worker_node_worker_pool.compute_requirement_template_usage,
-                worker_node_worker_pool.provisioned_worker_pool_properties,
-            ).id
-        )
+        worker_pool_id = self.yd_client.worker_pool_client.provision_worker_pool(
+            worker_node_worker_pool.compute_requirement_template_usage,
+            worker_node_worker_pool.provisioned_worker_pool_properties,
+        ).id
+        self.worker_node_worker_pool_ids.append(worker_pool_id)
 
         # Add the new task group
-        work_requirement = self._client.work_client.get_work_requirement_by_id(
+        work_requirement = self.yd_client.work_client.get_work_requirement_by_id(
             self.work_requirement_id
         )
         work_requirement.taskGroups.append(worker_node_worker_pool.task_group)
-        work_requirement = self._client.work_client.update_work_requirement(
+        work_requirement = self.yd_client.work_client.update_work_requirement(
             work_requirement
         )
 
-        # Add the tasks to the task group
+        # Add the worker node tasks to the task group
         self._add_tasks_to_task_group(
             task_group_id=work_requirement.taskGroups[
                 len(work_requirement.taskGroups) - 1
             ].id,
             worker_node_worker_pool=worker_node_worker_pool,
         )
+
+        return worker_pool_id
 
     def build(
         self, head_node_build_timeout: timedelta | None = None
@@ -294,18 +315,21 @@ class RayDogCluster:
             public IP address of the head node (or None).
         """
 
+        if self._is_shut_down:
+            raise Exception("'build()' method called on already shut-down cluster")
+
         start_time = datetime.now(timezone.utc)
 
         # Provision all currently defined worker pools
         self.head_node_worker_pool_id = (
-            self._client.worker_pool_client.provision_worker_pool(
+            self.yd_client.worker_pool_client.provision_worker_pool(
                 self._head_node_compute_requirement_template_usage,
                 self._head_node_provisioned_worker_pool_properties,
             ).id
         )
         for worker_node_worker_pool in self._worker_node_worker_pools:
             self.worker_node_worker_pool_ids.append(
-                self._client.worker_pool_client.provision_worker_pool(
+                self.yd_client.worker_pool_client.provision_worker_pool(
                     worker_node_worker_pool.compute_requirement_template_usage,
                     worker_node_worker_pool.provisioned_worker_pool_properties,
                 ).id
@@ -317,19 +341,21 @@ class RayDogCluster:
             worker_node_worker_pool.task_group
             for worker_node_worker_pool in self._worker_node_worker_pools
         ]
-        self._work_requirement = self._client.work_client.add_work_requirement(
+        self._work_requirement = self.yd_client.work_client.add_work_requirement(
             self._work_requirement
         )
         self.work_requirement_id = self._work_requirement.id
 
         # Add the head node task to the first task group
-        self.head_node_task_id = self._client.work_client.add_tasks_to_task_group_by_id(
-            self._work_requirement.taskGroups[0].id,
-            [self._head_node_task],
-        )[0].id
+        self.head_node_task_id = (
+            self.yd_client.work_client.add_tasks_to_task_group_by_id(
+                self._work_requirement.taskGroups[0].id,
+                [self._head_node_task],
+            )[0].id
+        )
 
         while True:  # Check for execution of the head node task
-            task = self._client.work_client.get_task_by_id(self.head_node_task_id)
+            task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
             if task.status == TaskStatus.EXECUTING:
                 break
             if (
@@ -344,7 +370,7 @@ class RayDogCluster:
 
         # Set the head node ID and get the node details
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
-        node: Node = self._client.worker_pool_client.get_node_by_id(
+        node: Node = self.yd_client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
         self.head_node_private_ip = node.details.privateIpAddress
@@ -363,15 +389,38 @@ class RayDogCluster:
 
         return self.head_node_private_ip, self.head_node_public_ip
 
+    def remove_worker_pool(self, worker_pool_id: str):
+        """
+        Terminate the compute requirement associated with a worker pool.
+
+        :param worker_pool_id: the ID of the worker pool to remove.
+        """
+
+        if self._is_shut_down:
+            raise Exception(
+                "'remove_worker_pool()' method called on already shut-down cluster"
+            )
+
+        worker_pool: ProvisionedWorkerPool = (
+            self.yd_client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
+        )
+        self.yd_client.compute_client.terminate_compute_requirement_by_id(
+            worker_pool.computeRequirementId
+        )
+        self.worker_node_worker_pool_ids.remove(worker_pool_id)
+
     def shut_down(self):
         """
         Shut down the Ray cluster by cancelling the work requirement, including
-        aborting all its tasks, and shutting down all the worker pools.
+        aborting all its tasks, and shutting down all remaining worker pools.
         """
+
+        if self._is_shut_down:
+            return
 
         if self.work_requirement_id is not None:
             try:
-                self._client.work_client.cancel_work_requirement_by_id(
+                self.yd_client.work_client.cancel_work_requirement_by_id(
                     self.work_requirement_id, abort=True
                 )
             except HTTPError as e:
@@ -380,28 +429,31 @@ class RayDogCluster:
             self.work_requirement_id = None
 
         if self.head_node_worker_pool_id is not None:
-            self._client.worker_pool_client.shutdown_worker_pool_by_id(
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
                 self.head_node_worker_pool_id
             )
             self.head_node_worker_pool_id = None
 
         for worker_pool_id in self.worker_node_worker_pool_ids:
-            self._client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
         self.worker_node_worker_pool_ids = []
+
+        self._is_shut_down = True
 
     def _add_tasks_to_task_group(
         self, task_group_id: str, worker_node_worker_pool: WorkerNodeWorkerPool
     ):
         """
-        Internal utility to add worker pool tasks to the applicable task group
+        Internal utility to add worker pool tasks to the applicable task group.
 
         :param task_group_id: the ID of the task group.
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
         """
+
         worker_node_worker_pool.task_prototype.environment.update(
             {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
         )
-        self._client.work_client.add_tasks_to_task_group_by_id(
+        self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group_id,
             [
                 worker_node_worker_pool.task_prototype
