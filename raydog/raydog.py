@@ -111,7 +111,7 @@ class RayDogCluster:
 
         self._client = PlatformClient.create(
             ServicesSchema(defaultUrl=yd_platform_api_url),
-            ApiKey(yd_application_key_id, yd_application_key_secret),
+            ApiKey(id=yd_application_key_id, secret=yd_application_key_secret),
         )
         self._cluster_name = cluster_name
         self._cluster_namespace = cluster_namespace
