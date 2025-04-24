@@ -366,7 +366,7 @@ class RayDogCluster:
 
         return self.head_node_private_ip, self.head_node_public_ip
 
-    def remove_worker_pool(self, worker_pool_id):
+    def remove_worker_pool(self, worker_pool_id: str):
         """
         Terminate the compute requirement associated with a worker pool.
 
@@ -411,7 +411,7 @@ class RayDogCluster:
         self, task_group_id: str, worker_node_worker_pool: WorkerNodeWorkerPool
     ):
         """
-        Internal utility to add worker pool tasks to the applicable task group
+        Internal utility to add worker pool tasks to the applicable task group.
 
         :param task_group_id: the ID of the task group.
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
