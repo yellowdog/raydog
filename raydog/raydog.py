@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import sleep
 
+from requests.exceptions import HTTPError
 from yellowdog_client.model import (
     AutoShutdown,
     ComputeRequirementTemplateUsage,
@@ -337,9 +338,13 @@ class RayDogCluster:
         """
 
         if self.work_requirement_id is not None:
-            self._client.work_client.cancel_work_requirement_by_id(
-                self.work_requirement_id, abort=True
-            )
+            try:
+                self._client.work_client.cancel_work_requirement_by_id(
+                    self.work_requirement_id, abort=True
+                )
+            except HTTPError as e:
+                if "InvalidWorkRequirementStatusException" in str(e):
+                    pass  # Suppress exception if it's just a state transition error
             self.work_requirement_id = None
 
         if self.head_node_worker_pool_id is not None:
