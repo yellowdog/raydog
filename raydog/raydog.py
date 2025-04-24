@@ -177,6 +177,8 @@ class RayDogCluster:
 
         self._worker_node_worker_pools: list[WorkerNodeWorkerPool] = []
 
+        self._is_shut_down = False
+
         # Public properties
         self.work_requirement_id: str | None = None
         self.head_node_worker_pool_id: str | None = None
@@ -217,6 +219,11 @@ class RayDogCluster:
         :return: returns the worker pool ID if a worker pool was created, or None if the
             pool will be created later using the build() method.
         """
+
+        if self._is_shut_down:
+            raise Exception(
+                "'add_worker_pool()' method called on already shut-down cluster"
+            )
 
         if worker_pool_node_count < 1:
             raise ValueError("worker_pool_node_count must be > 0")
@@ -308,6 +315,9 @@ class RayDogCluster:
             public IP address of the head node (or None).
         """
 
+        if self._is_shut_down:
+            raise Exception("'build()' method called on already shut-down cluster")
+
         start_time = datetime.now(timezone.utc)
 
         # Provision all currently defined worker pools
@@ -384,6 +394,11 @@ class RayDogCluster:
         :param worker_pool_id: the ID of the worker pool to remove.
         """
 
+        if self._is_shut_down:
+            raise Exception(
+                "'remove_worker_pool()' method called on already shut-down cluster"
+            )
+
         worker_pool: ProvisionedWorkerPool = (
             self._client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
         )
@@ -397,6 +412,9 @@ class RayDogCluster:
         Shut down the Ray cluster by cancelling the work requirement, including
         aborting all its tasks, and shutting down all the worker pools.
         """
+
+        if self._is_shut_down:
+            return
 
         if self.work_requirement_id is not None:
             try:
@@ -417,6 +435,8 @@ class RayDogCluster:
         for worker_pool_id in self.worker_node_worker_pool_ids:
             self._client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
         self.worker_node_worker_pool_ids = []
+
+        self._is_shut_down = True
 
     def _add_tasks_to_task_group(
         self, task_group_id: str, worker_node_worker_pool: WorkerNodeWorkerPool
