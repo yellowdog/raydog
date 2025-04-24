@@ -172,6 +172,7 @@ class RayDogCluster:
         )
 
         self._worker_node_worker_pools: list[WorkerNodeWorkerPool] = []
+        self._task_group_running_total = 0  # Note: never decremented
 
         self._is_shut_down = False
 
@@ -228,7 +229,8 @@ class RayDogCluster:
         if worker_pool_node_count < 1:
             raise ValueError("worker_pool_node_count must be > 0")
 
-        worker_pool_index_str = str(len(self._worker_node_worker_pools) + 1).zfill(2)
+        self._task_group_running_total += 1
+        worker_pool_index_str = str(self._task_group_running_total).zfill(2)
 
         worker_node_worker_pool = WorkerNodeWorkerPool(
             compute_requirement_template_usage=ComputeRequirementTemplateUsage(
