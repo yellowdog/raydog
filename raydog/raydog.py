@@ -12,6 +12,7 @@ from yellowdog_client.model import (
     ComputeRequirementTemplateUsage,
     Node,
     NodeWorkerTarget,
+    ProvisionedWorkerPool,
     ProvisionedWorkerPoolProperties,
     RunSpecification,
     Task,
@@ -166,13 +167,13 @@ class RayDogCluster:
         self._worker_node_worker_pools: list[WorkerNodeWorkerPool] = []
 
         # Public properties
+        self.work_requirement_id: str | None = None
         self.head_node_worker_pool_id: str | None = None
         self.head_node_node_id: str | None = None
         self.head_node_private_ip: str | None = None
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
         self.worker_node_worker_pool_ids: list[str] = []
-        self.work_requirement_id: str | None = None
 
     def add_worker_pool(
         self,
@@ -183,7 +184,7 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
-    ):
+    ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
 
@@ -202,7 +203,8 @@ class RayDogCluster:
             worker nodes.
         :param worker_node_task_script: the Bash script for starting the ray worker
             nodes in this worker pool.
-        :return:
+        :return: returns the worker pool ID if a worker pool was created, or None if the
+            pool will be created later using the build() method.
         """
 
         if worker_pool_node_count < 1:
@@ -252,15 +254,14 @@ class RayDogCluster:
         self._worker_node_worker_pools.append(worker_node_worker_pool)
 
         if self.head_node_private_ip is None:
-            return  # No head node set up yet; wait for build()
+            return None  # No head node set up yet; wait for build()
 
         # Provision the new worker pool
-        self.worker_node_worker_pool_ids.append(
-            self._client.worker_pool_client.provision_worker_pool(
-                worker_node_worker_pool.compute_requirement_template_usage,
-                worker_node_worker_pool.provisioned_worker_pool_properties,
-            ).id
-        )
+        worker_pool_id = self._client.worker_pool_client.provision_worker_pool(
+            worker_node_worker_pool.compute_requirement_template_usage,
+            worker_node_worker_pool.provisioned_worker_pool_properties,
+        ).id
+        self.worker_node_worker_pool_ids.append(worker_pool_id)
 
         # Add the new task group
         work_requirement = self._client.work_client.get_work_requirement_by_id(
@@ -271,13 +272,15 @@ class RayDogCluster:
             work_requirement
         )
 
-        # Add the tasks to the task group
+        # Add the worker node tasks to the task group
         self._add_tasks_to_task_group(
             task_group_id=work_requirement.taskGroups[
                 len(work_requirement.taskGroups) - 1
             ].id,
             worker_node_worker_pool=worker_node_worker_pool,
         )
+
+        return worker_pool_id
 
     def build(
         self, head_node_build_timeout: timedelta | None = None
@@ -363,6 +366,21 @@ class RayDogCluster:
 
         return self.head_node_private_ip, self.head_node_public_ip
 
+    def remove_worker_pool(self, worker_pool_id):
+        """
+        Terminate the compute requirement associated with a worker pool.
+
+        :param worker_pool_id: the ID of the worker pool to remove.
+        """
+
+        worker_pool: ProvisionedWorkerPool = (
+            self._client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
+        )
+        self._client.compute_client.terminate_compute_requirement_by_id(
+            worker_pool.computeRequirementId
+        )
+        self.worker_node_worker_pool_ids.remove(worker_pool_id)
+
     def shut_down(self):
         """
         Shut down the Ray cluster by cancelling the work requirement, including
@@ -398,6 +416,7 @@ class RayDogCluster:
         :param task_group_id: the ID of the task group.
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
         """
+
         worker_node_worker_pool.task_prototype.environment.update(
             {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
         )
