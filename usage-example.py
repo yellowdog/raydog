@@ -10,8 +10,6 @@ from time import sleep
 
 import dotenv
 import ray
-from yellowdog_client.model import ApiKey, ServicesSchema
-from yellowdog_client.platform_client import PlatformClient
 
 from raydog.raydog import RayDogCluster
 
