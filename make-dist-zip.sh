@@ -10,7 +10,7 @@ VERSION_FILE="version.txt"
 rm -rf "${DIST:?}/$RAYDOG"
 mkdir -p "$DIST/$RAYDOG"
 
-echo "Commit ID: $COMMIT" >> "$DIST/$RAYDOG/$VERSION_FILE"
+echo "Commit ID: $COMMIT" > "$DIST/$RAYDOG/$VERSION_FILE"
 
 rm -rf raydog/__pycache__
 

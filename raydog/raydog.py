@@ -46,6 +46,14 @@ HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
 IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 3.0
 
 
+@dataclass
+class WorkerNodeWorkerPool:
+    compute_requirement_template_usage: ComputeRequirementTemplateUsage
+    provisioned_worker_pool_properties: ProvisionedWorkerPoolProperties
+    task_group: TaskGroup
+    task_prototype: Task
+
+
 class RayDogCluster:
     """
     A class representing a Ray cluster managed by YellowDog.
@@ -159,11 +167,12 @@ class RayDogCluster:
 
         # Public properties
         self.head_node_worker_pool_id: str | None = None
+        self.head_node_node_id: str | None = None
+        self.head_node_private_ip: str | None = None
+        self.head_node_public_ip: str | None = None
+        self.head_node_task_id: str | None = None
         self.worker_node_worker_pool_ids: list[str] = []
         self.work_requirement_id: str | None = None
-        self.head_node_task_id: str | None = None
-        self.worker_node_task_ids: list[str] | None = None
-        self.head_node_node_id: str | None = None
 
     def add_worker_pool(
         self,
@@ -201,45 +210,73 @@ class RayDogCluster:
 
         worker_pool_index_str = str(len(self._worker_node_worker_pools) + 1).zfill(2)
 
-        self._worker_node_worker_pools.append(
-            WorkerNodeWorkerPool(
-                compute_requirement_template_usage=ComputeRequirementTemplateUsage(
-                    templateId=worker_node_compute_requirement_template_id,
-                    requirementName=f"{self._cluster_name}-{worker_pool_index_str}",
-                    requirementNamespace=self._cluster_namespace,
-                    requirementTag=self._cluster_tag,
-                    targetInstanceCount=worker_pool_node_count,
-                    imagesId=worker_node_images_id,
-                    userData=worker_node_userdata,
-                    instanceTags=worker_node_instance_tags,
+        worker_node_worker_pool = WorkerNodeWorkerPool(
+            compute_requirement_template_usage=ComputeRequirementTemplateUsage(
+                templateId=worker_node_compute_requirement_template_id,
+                requirementName=f"{self._cluster_name}-{worker_pool_index_str}",
+                requirementNamespace=self._cluster_namespace,
+                requirementTag=self._cluster_tag,
+                targetInstanceCount=worker_pool_node_count,
+                imagesId=worker_node_images_id,
+                userData=worker_node_userdata,
+                instanceTags=worker_node_instance_tags,
+            ),
+            provisioned_worker_pool_properties=ProvisionedWorkerPoolProperties(
+                createNodeWorkers=NodeWorkerTarget.per_node(1),
+                minNodes=0,
+                maxNodes=worker_pool_node_count,
+                workerTag=f"{self._cluster_name}-{worker_pool_index_str}",
+                metricsEnabled=worker_node_metrics_enabled,
+                idleNodeShutdown=self._auto_shut_down,
+                idlePoolShutdown=self._auto_shut_down,
+            ),
+            task_group=TaskGroup(
+                name=f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}",
+                finishIfAnyTaskFailed=False,
+                runSpecification=RunSpecification(
+                    taskTypes=[TASK_TYPE],
+                    workerTags=[f"{self._cluster_name}-{worker_pool_index_str}"],
+                    namespaces=[self._cluster_namespace],
+                    exclusiveWorkers=True,
+                    taskTimeout=self._cluster_lifetime,
                 ),
-                provisioned_worker_pool_properties=ProvisionedWorkerPoolProperties(
-                    createNodeWorkers=NodeWorkerTarget.per_node(1),
-                    minNodes=0,
-                    maxNodes=worker_pool_node_count,
-                    workerTag=f"{self._cluster_name}-{worker_pool_index_str}",
-                    metricsEnabled=worker_node_metrics_enabled,
-                    idleNodeShutdown=self._auto_shut_down,
-                    idlePoolShutdown=self._auto_shut_down,
-                ),
-                task_group=TaskGroup(
-                    name=f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}",
-                    finishIfAnyTaskFailed=False,
-                    runSpecification=RunSpecification(
-                        taskTypes=[TASK_TYPE],
-                        workerTags=[f"{self._cluster_name}-{worker_pool_index_str}"],
-                        namespaces=[self._cluster_namespace],
-                        exclusiveWorkers=True,
-                        taskTimeout=self._cluster_lifetime,
-                    ),
-                ),
-                task_prototype=Task(
-                    taskType=TASK_TYPE,
-                    taskData=worker_node_task_script,
-                    arguments=["taskdata.txt"],
-                    environment={},
-                ),
-            )
+            ),
+            task_prototype=Task(
+                taskType=TASK_TYPE,
+                taskData=worker_node_task_script,
+                arguments=["taskdata.txt"],
+                environment={},
+            ),
+        )
+
+        self._worker_node_worker_pools.append(worker_node_worker_pool)
+
+        if self.head_node_private_ip is None:
+            return  # No head node set up yet; wait for build()
+
+        # Provision the new worker pool
+        self.worker_node_worker_pool_ids.append(
+            self._client.worker_pool_client.provision_worker_pool(
+                worker_node_worker_pool.compute_requirement_template_usage,
+                worker_node_worker_pool.provisioned_worker_pool_properties,
+            ).id
+        )
+
+        # Add the new task group
+        work_requirement = self._client.work_client.get_work_requirement_by_id(
+            self.work_requirement_id
+        )
+        work_requirement.taskGroups.append(worker_node_worker_pool.task_group)
+        work_requirement = self._client.work_client.update_work_requirement(
+            work_requirement
+        )
+
+        # Add the tasks to the task group
+        self._add_tasks_to_task_group(
+            task_group_id=work_requirement.taskGroups[
+                len(work_requirement.taskGroups) - 1
+            ].id,
+            worker_node_worker_pool=worker_node_worker_pool,
         )
 
     def build(
@@ -259,7 +296,7 @@ class RayDogCluster:
 
         start_time = datetime.now(timezone.utc)
 
-        # Provision the worker pools
+        # Provision all currently defined worker pools
         self.head_node_worker_pool_id = (
             self._client.worker_pool_client.provision_worker_pool(
                 self._head_node_compute_requirement_template_usage,
@@ -274,7 +311,8 @@ class RayDogCluster:
                 ).id
             )
 
-        # Add the additional task groups to the work requirement and submit
+        # Add currently defined worker node task groups to the work requirement,
+        # and submit it
         self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
             for worker_node_worker_pool in self._worker_node_worker_pools
@@ -284,7 +322,7 @@ class RayDogCluster:
         )
         self.work_requirement_id = self._work_requirement.id
 
-        # Add the head node task
+        # Add the head node task to the first task group
         self.head_node_task_id = self._client.work_client.add_tasks_to_task_group_by_id(
             self._work_requirement.taskGroups[0].id,
             [self._head_node_task],
@@ -304,36 +342,31 @@ class RayDogCluster:
                 )
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
 
-        # Set the head node ID get the node details
+        # Set the head node ID and get the node details
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
         node: Node = self._client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
+        self.head_node_private_ip = node.details.privateIpAddress
+        self.head_node_public_ip = node.details.publicIpAddress
 
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, worker_node_worker_pool in enumerate(
             self._worker_node_worker_pools
         ):
-            # Add the private IP address of the head node to the worker task environment
-            worker_node_worker_pool.task_prototype.environment.update(
-                {"RAY_HEAD_NODE_PRIVATE_IP": node.details.privateIpAddress}
-            )
-            self._client.work_client.add_tasks_to_task_group_by_id(
-                self._work_requirement.taskGroups[task_group_index + 1].id,
-                [
-                    worker_node_worker_pool.task_prototype
-                    for _ in range(
-                        worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
-                    )
-                ],
+            self._add_tasks_to_task_group(
+                task_group_id=self._work_requirement.taskGroups[
+                    task_group_index + 1
+                ].id,
+                worker_node_worker_pool=worker_node_worker_pool,
             )
 
-        return node.details.privateIpAddress, node.details.publicIpAddress
+        return self.head_node_private_ip, self.head_node_public_ip
 
     def shut_down(self):
         """
-        Shut down the Ray cluster by cancelling the work requirement and
-        shutting down all the worker pools.
+        Shut down the Ray cluster by cancelling the work requirement, including
+        aborting all its tasks, and shutting down all the worker pools.
         """
 
         if self.work_requirement_id is not None:
@@ -356,10 +389,24 @@ class RayDogCluster:
             self._client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
         self.worker_node_worker_pool_ids = []
 
+    def _add_tasks_to_task_group(
+        self, task_group_id: str, worker_node_worker_pool: WorkerNodeWorkerPool
+    ):
+        """
+        Internal utility to add worker pool tasks to the applicable task group
 
-@dataclass
-class WorkerNodeWorkerPool:
-    compute_requirement_template_usage: ComputeRequirementTemplateUsage
-    provisioned_worker_pool_properties: ProvisionedWorkerPoolProperties
-    task_group: TaskGroup
-    task_prototype: Task
+        :param task_group_id: the ID of the task group.
+        :param worker_node_worker_pool: the properties of the worker nodes worker pool.
+        """
+        worker_node_worker_pool.task_prototype.environment.update(
+            {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
+        )
+        self._client.work_client.add_tasks_to_task_group_by_id(
+            task_group_id,
+            [
+                worker_node_worker_pool.task_prototype
+                for _ in range(
+                    worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
+                )
+            ],
+        )
