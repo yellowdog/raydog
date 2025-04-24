@@ -3,7 +3,7 @@ Build a Ray cluster using YellowDog.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from time import sleep
 
 from yellowdog_client.model import (
@@ -67,7 +67,7 @@ class RayDogCluster:
     ):
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
-        
+
         :param client: a YellowDog PlatformClient object for connecting to the
             YellowDog platform.
         :param cluster_name: a name for the cluster; the name must be unique to the
@@ -184,12 +184,12 @@ class RayDogCluster:
     ):
         """
         Add a worker pool and task group that will provide Ray worker nodes.
-        
+
         :param worker_node_compute_requirement_template_id: the YellowDog compute
             requirement template ID to use for the worker nodes in this worker
             pool.
         :param worker_pool_node_count: the number of ray worker nodes to create in
-            this worker pool.
+            this worker pool. Must be > 0.
         :param worker_node_images_id: the images ID to use with the compute
             requirement template, if required.
         :param worker_node_userdata: optional userdata for use when the worker node
@@ -200,13 +200,17 @@ class RayDogCluster:
             worker nodes.
         :return:
         """
-        worker_pool_index = str(len(self._worker_node_worker_pools) + 1).zfill(2)
+
+        if worker_pool_node_count < 1:
+            raise ValueError("worker_pool_node_count must be > 0")
+
+        worker_pool_index_str = str(len(self._worker_node_worker_pools) + 1).zfill(2)
 
         self._worker_node_worker_pools.append(
             WorkerNodeWorkerPool(
                 compute_requirement_template_usage=ComputeRequirementTemplateUsage(
                     templateId=worker_node_compute_requirement_template_id,
-                    requirementName=f"{self._cluster_name}-{worker_pool_index}",
+                    requirementName=f"{self._cluster_name}-{worker_pool_index_str}",
                     requirementNamespace=self._cluster_namespace,
                     requirementTag=self._cluster_tag,
                     targetInstanceCount=worker_pool_node_count,
@@ -218,17 +222,17 @@ class RayDogCluster:
                     createNodeWorkers=NodeWorkerTarget.per_node(1),
                     minNodes=0,
                     maxNodes=worker_pool_node_count,
-                    workerTag=f"{self._cluster_name}-{worker_pool_index}",
+                    workerTag=f"{self._cluster_name}-{worker_pool_index_str}",
                     metricsEnabled=worker_node_metrics_enabled,
                     idleNodeShutdown=self._auto_shut_down,
                     idlePoolShutdown=self._auto_shut_down,
                 ),
                 task_group=TaskGroup(
-                    name=f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index}",
+                    name=f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}",
                     finishIfAnyTaskFailed=False,
                     runSpecification=RunSpecification(
                         taskTypes=[TASK_TYPE],
-                        workerTags=[f"{self._cluster_name}-{worker_pool_index}"],
+                        workerTags=[f"{self._cluster_name}-{worker_pool_index_str}"],
                         namespaces=[self._cluster_namespace],
                         exclusiveWorkers=True,
                         taskTimeout=self._cluster_lifetime,
@@ -244,7 +248,7 @@ class RayDogCluster:
         Build the cluster. This method will block until the Ray head node
         is ready, but note that Ray worker nodes will still be configuring
         and joining the cluster.
-        
+
         :param head_node_build_timeout: an optional timeout for building the head node;
             if the timeout expires before the head node task is executing, a TimeoutError
             exception will be raised.
@@ -252,7 +256,7 @@ class RayDogCluster:
             public IP address of the head node (or None).
         """
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         # Provision the worker pools
         self.head_node_worker_pool_id = (
@@ -270,7 +274,7 @@ class RayDogCluster:
             )
 
         # Add the additional task groups to the work requirement and submit
-        self._work_requirement.taskGroups = self._work_requirement.taskGroups + [
+        self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
             for worker_node_worker_pool in self._worker_node_worker_pools
         ]
@@ -291,7 +295,7 @@ class RayDogCluster:
                 break
             if (
                 head_node_build_timeout is not None
-                and datetime.now() - start_time >= head_node_build_timeout
+                and datetime.now(timezone.utc) - start_time >= head_node_build_timeout
             ):
                 self.shut_down()
                 raise TimeoutError(
@@ -305,7 +309,7 @@ class RayDogCluster:
             self.head_node_node_id
         )
 
-        # Update the worker node task with the IP address of the head node
+        # Add the private IP address of the head node to the worker task environment
         self._worker_node_task.environment = {
             "RAY_HEAD_NODE_PRIVATE_IP": node.details.privateIpAddress
         }
@@ -329,18 +333,24 @@ class RayDogCluster:
     def shut_down(self):
         """
         Shut down the Ray cluster by cancelling the work requirement and
-        shutting down the worker pool(s).
+        shutting down all the worker pools.
         """
+
         if self.work_requirement_id is not None:
             self._client.work_client.cancel_work_requirement_by_id(
                 self.work_requirement_id, abort=True
             )
+            self.work_requirement_id = None
+
         if self.head_node_worker_pool_id is not None:
             self._client.worker_pool_client.shutdown_worker_pool_by_id(
                 self.head_node_worker_pool_id
             )
+            self.head_node_worker_pool_id = None
+
         for worker_pool_id in self.worker_node_worker_pool_ids:
             self._client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
+        self.worker_node_worker_pool_ids = []
 
 
 @dataclass
