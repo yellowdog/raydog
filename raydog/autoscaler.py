@@ -40,15 +40,18 @@ class RayDogNodeProvider(NodeProvider):
         self.provider_config = provider_config
         self.cluster_name = cluster_name
     
+        # Create a unique id for this cluster
         shortuuid.set_alphabet("0123456789abcdefghijklmnopqrstuvwxyz")
         self.cluster_id = cluster_name + '-' + shortuuid.uuid()
 
+        # Store info about the nodes we are creating
         self._node_info: Dict[str, NodeInfo] = {}
         self._raydog = None
 
-        self._ip_cache: Dict[str, (str, str)] = {}
-     
-        self._worker_pools: Dict[str, Any] = {}
+        # Read setup scripts
+        self._init_script = self._get_script('initialization_script')
+        self._head_script = self._get_script('head_start_ray_script')
+        self._worker_script = self._get_script('worker_start_ray_script')
 
         # Read any extra environment variables from a file
         dotenv.load_dotenv(verbose=True, override=True)
@@ -58,13 +61,13 @@ class RayDogNodeProvider(NodeProvider):
         self._api_key_id = os.getenv("YD_API_KEY_ID")
         self._api_key_secret = os.getenv("YD_API_KEY_SECRET")
 
-        self._ydclient = PlatformClient.create(
-            ServicesSchema(defaultUrl=self._api_url),
-            ApiKey(
-                os.getenv(self._api_key_id),
-                os.getenv(self._api_key_secret),
-            ),
-        )
+        # self._ydclient = PlatformClient.create(
+        #     ServicesSchema(defaultUrl=self._api_url),
+        #     ApiKey(
+        #         os.getenv(self._api_key_id),
+        #         os.getenv(self._api_key_secret),
+        #     ),
+        # )
 
     def __del__(self):
         """Shutdown the cluster"""
@@ -108,12 +111,12 @@ class RayDogNodeProvider(NodeProvider):
     def is_terminated(self, node_id: str) -> bool:
         """Return whether the specified node is terminated."""
         print("is_terminated", node_id)
-        self._get_node_info(node_id).terminated
+        return self._get_node_info(node_id).terminated
 
     def node_tags(self, node_id: str) -> Dict[str, str]:
         """Returns the tags of the given node (string dict)."""
         print("node_tags", node_id)
-        self._get_node_info(node_id).tags
+        return self._get_node_info(node_id).tags
 
     def set_node_tags(self, node_id: str, tags: Dict[str, str]) -> None:
         """Sets the tag values (string dict) for the specified node."""
@@ -170,7 +173,8 @@ class RayDogNodeProvider(NodeProvider):
 
                 head_node_compute_requirement_template_id=node_config['compute_requirement_template'],
                 head_node_images_id=node_config['images_id'],
-                head_node_userdata=self._read_file(node_config['userdata']),
+                head_node_userdata=self._init_script,
+                head_node_ray_start_script=self._head_script
             )
 
             self._raydog.build()
@@ -189,7 +193,8 @@ class RayDogNodeProvider(NodeProvider):
 
                     worker_node_compute_requirement_template_id=node_config['compute_requirement_template'],
                     worker_node_images_id=node_config['images_id'],
-                    worker_node_userdata=self._read_file(node_config['userdata'])
+                    worker_node_userdata=self._init_script,
+                    worker_node_task_script=self._worker_script
                 )
                 pool = self._raydog.worker_node_worker_pools.get(node_name)
 
@@ -237,7 +242,7 @@ class RayDogNodeProvider(NodeProvider):
         if not task:
             task = self._read_task_info(node_id)
 
-        info = NodeInfo(task_id=node_id, tags=tags, task=task)
+        info = NodeInfo(task_id=node_id, tags=tags.copy(), task=task)
         self._node_info[node_id] = info
         return info
 
@@ -282,3 +287,18 @@ class RayDogNodeProvider(NodeProvider):
         with open(filename) as f:
             return f.read()
 
+    def _get_script(self, config_name: str):
+        """Either read a script from a file or create it from a list of lines"""
+        script = self.provider_config.get(config_name)
+        if not script:
+            return ""
+
+        if isinstance(script, str) and script.startswith("file:"):
+            filename = script[5:]
+            with open(filename) as f:
+                return f.read()
+
+        elif isinstance(script, List):
+            return '\n'.join(script)
+
+        return script

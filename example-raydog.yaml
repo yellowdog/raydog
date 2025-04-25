@@ -5,6 +5,26 @@ provider:
   namespace: raydog-example
   lifetime: 10m
 
+  initialization_script: file:example-node-setup.sh
+
+  head_start_ray_script: 
+  - "#!/usr/bin/bash"
+  - trap "ray stop; echo Ray stopped" EXIT
+  - set -euo pipefail
+  - VENV=/opt/yellowdog/agent/venv
+  - source $VENV/bin/activate
+  - ray stop
+  - ray start --disable-usage-stats --head --port=6379 --block
+
+  worker_start_ray_script:
+  - "#!/usr/bin/bash"
+  - trap "ray stop; echo Ray stopped" EXIT
+  - set -euo pipefail
+  - VENV=/opt/yellowdog/agent/venv
+  - source $VENV/bin/activate
+  - ray stop
+  - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
+
 # An unique identifier for the head node and workers of this cluster.
 cluster_name: raydog
 
@@ -15,7 +35,6 @@ available_node_types:
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand           
       images_id: ami-0fef583e486727263
-      userdata: example-node-setup.sh
 
   ray_worker_small:
     resources: { "CPU": 2 }
@@ -24,7 +43,6 @@ available_node_types:
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand           
       images_id: ami-0fef583e486727263
-      userdata: example-node-setup.sh
 
 # Specify the node type of the head node (as configured above).
 head_node_type: ray_head_default
@@ -97,42 +115,16 @@ rsync_exclude:
 rsync_filter:
     - ".gitignore"
 
-# List of commands that will be run before `setup_commands`. If docker is
-# enabled, these commands will run outside the container and before docker
-# is setup.
+# RayDog handles setting-up nodes up and starting Ray 
+# Do any customisation you need in the 'provider' section
 initialization_commands: []
 
-# List of shell commands to run to set up nodes.
 setup_commands: []
-    # Note: if you're developing Ray, you probably want to create a Docker image that
-    # has your Ray repo pre-cloned. Then, you can replace the pip installs
-    # below with a git checkout <your_sha> (and possibly a recompile).
-    # To run the nightly version of ray (as opposed to the latest), either use a rayproject docker image
-    # that has the "nightly" (e.g. "rayproject/ray-ml:nightly-gpu") or uncomment the following line:
-    # - pip install -U "ray[default] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp37-cp37m-manylinux2014_x86_64.whl"
 
+head_setup_commands: []
 
-# Custom commands that will be run on the head node after common setup.
-head_setup_commands:
-  - pip install google-api-python-client==1.7.8
-
-# Custom commands that will be run on worker nodes after common setup.
 worker_setup_commands: []
 
-# Command to start ray on the head node. You don't need to change this.
-head_start_ray_commands:
-    - ray stop
-    - >-
-      ray start
-      --head
-      --port=6379
-      --object-manager-port=8076
-      --autoscaling-config=~/ray_bootstrap_config.yaml
+head_start_ray_commands: []
 
-# Command to start ray on worker nodes. You don't need to change this.
-worker_start_ray_commands:
-    - ray stop
-    - >-
-      ray start
-      --address=$RAY_HEAD_IP:6379
-      --object-manager-port=8076
+worker_start_ray_commands: []
