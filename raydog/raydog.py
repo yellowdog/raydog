@@ -403,6 +403,12 @@ class RayDogCluster:
                 "'remove_worker_pool()' method called on already shut-down cluster"
             )
 
+        if worker_pool_id not in self.worker_node_worker_pool_ids:
+            raise Exception(
+                f"Worker pool ID '{worker_pool_id}' not "
+                "in current list of worker node worker pools"
+            )
+
         worker_pool: ProvisionedWorkerPool = (
             self.yd_client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
         )
