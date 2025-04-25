@@ -171,11 +171,11 @@ class RayDogCluster:
             ],
         )
 
-        self._worker_node_worker_pools: list[WorkerNodeWorkerPool] = []
+        self._task_group_running_total = 0  # Note: never decremented
 
         self._is_shut_down = False
 
-        # Properties publicly available (for reading)
+        # Properties publicly available for reading
         self.yd_client = PlatformClient.create(
             ServicesSchema(defaultUrl=yd_platform_api_url),
             ApiKey(id=yd_application_key_id, secret=yd_application_key_secret),
@@ -186,12 +186,14 @@ class RayDogCluster:
         self.head_node_private_ip: str | None = None
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
+        self.worker_node_worker_pools: dict[str, WorkerNodeWorkerPool] = {}
         self.worker_node_worker_pool_ids: list[str] = []
 
     def add_worker_pool(
         self,
         worker_node_compute_requirement_template_id: str,
         worker_pool_node_count: int,
+        worker_pool_internal_name: str | None = None,
         worker_node_images_id: str | None = None,
         worker_node_userdata: str | None = None,
         worker_node_instance_tags: dict[str, str] | None = None,
@@ -206,6 +208,8 @@ class RayDogCluster:
             pool.
         :param worker_pool_node_count: the number of ray worker nodes to create in
             this worker pool. Must be > 0.
+        :param worker_pool_internal_name: an optional internal name that can be used
+            to look up the worker_node_worker_pool_object. Must be unique to the cluster.
         :param worker_node_images_id: the images ID to use with the compute
             requirement template, if required.
         :param worker_node_userdata: optional userdata for use when the worker node
@@ -228,12 +232,15 @@ class RayDogCluster:
         if worker_pool_node_count < 1:
             raise ValueError("worker_pool_node_count must be > 0")
 
-        worker_pool_index_str = str(len(self._worker_node_worker_pools) + 1).zfill(2)
+        self._task_group_running_total += 1
+        worker_pool_index_str = str(self._task_group_running_total).zfill(2)
+        task_group_name = f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}"
+        worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}"
 
         worker_node_worker_pool = WorkerNodeWorkerPool(
             compute_requirement_template_usage=ComputeRequirementTemplateUsage(
                 templateId=worker_node_compute_requirement_template_id,
-                requirementName=f"{self._cluster_name}-{worker_pool_index_str}",
+                requirementName=worker_pool_name,
                 requirementNamespace=self._cluster_namespace,
                 requirementTag=self._cluster_tag,
                 targetInstanceCount=worker_pool_node_count,
@@ -245,17 +252,17 @@ class RayDogCluster:
                 createNodeWorkers=NodeWorkerTarget.per_node(1),
                 minNodes=0,
                 maxNodes=worker_pool_node_count,
-                workerTag=f"{self._cluster_name}-{worker_pool_index_str}",
+                workerTag=worker_pool_name,
                 metricsEnabled=worker_node_metrics_enabled,
                 idleNodeShutdown=self._auto_shut_down,
                 idlePoolShutdown=self._auto_shut_down,
             ),
             task_group=TaskGroup(
-                name=f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}",
+                name=task_group_name,
                 finishIfAnyTaskFailed=False,
                 runSpecification=RunSpecification(
                     taskTypes=[TASK_TYPE],
-                    workerTags=[f"{self._cluster_name}-{worker_pool_index_str}"],
+                    workerTags=[worker_pool_name],
                     namespaces=[self._cluster_namespace],
                     exclusiveWorkers=True,
                     taskTimeout=self._cluster_lifetime,
@@ -269,7 +276,17 @@ class RayDogCluster:
             ),
         )
 
-        self._worker_node_worker_pools.append(worker_node_worker_pool)
+        internal_name = (
+            task_group_name
+            if worker_pool_internal_name is None
+            else worker_pool_internal_name
+        )
+        if self.worker_node_worker_pools.get(internal_name) is not None:
+            raise Exception(
+                f"Internal name '{internal_name}' for worker node worker pool "
+                "is already in use"
+            )
+        self.worker_node_worker_pools.update({internal_name: worker_node_worker_pool})
 
         if self.head_node_private_ip is None:
             return None  # No head node set up yet; wait for build()
@@ -327,7 +344,7 @@ class RayDogCluster:
                 self._head_node_provisioned_worker_pool_properties,
             ).id
         )
-        for worker_node_worker_pool in self._worker_node_worker_pools:
+        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
             self.worker_node_worker_pool_ids.append(
                 self.yd_client.worker_pool_client.provision_worker_pool(
                     worker_node_worker_pool.compute_requirement_template_usage,
@@ -339,7 +356,7 @@ class RayDogCluster:
         # and submit it
         self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
-            for worker_node_worker_pool in self._worker_node_worker_pools
+            for (_, worker_node_worker_pool) in self.worker_node_worker_pools.items()
         ]
         self._work_requirement = self.yd_client.work_client.add_work_requirement(
             self._work_requirement
@@ -377,8 +394,8 @@ class RayDogCluster:
         self.head_node_public_ip = node.details.publicIpAddress
 
         # Add worker node tasks to their task groups, one task per worker node
-        for task_group_index, worker_node_worker_pool in enumerate(
-            self._worker_node_worker_pools
+        for task_group_index, (_, worker_node_worker_pool) in enumerate(
+            self.worker_node_worker_pools.items()
         ):
             self._add_tasks_to_task_group(
                 task_group_id=self._work_requirement.taskGroups[
@@ -399,6 +416,12 @@ class RayDogCluster:
         if self._is_shut_down:
             raise Exception(
                 "'remove_worker_pool()' method called on already shut-down cluster"
+            )
+
+        if worker_pool_id not in self.worker_node_worker_pool_ids:
+            raise Exception(
+                f"Worker pool ID '{worker_pool_id}' not "
+                "in current list of worker node worker pools"
             )
 
         worker_pool: ProvisionedWorkerPool = (
