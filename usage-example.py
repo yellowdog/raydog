@@ -117,8 +117,8 @@ set -euo pipefail
 
 echo "Installing the YellowDog agent"
 cd /root || exit
-curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh \
-      | bash &> /dev/null
+curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads\
+/main/agent-install/linux/yd-agent-installer.sh | bash &> /dev/null
 
 ################################################################################
 YD_AGENT_USER="yd-agent"
