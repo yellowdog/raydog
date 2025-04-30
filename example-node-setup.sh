@@ -56,12 +56,27 @@ source $VENV/bin/activate
 echo "Installing Ray"
 uv pip install ray[client]
 
-echo "Setting file/directory ownership to $YD_AGENT_USER"
-chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.local $VENV $YD_AGENT_HOME/.cache
+################################################################################
+
+echo "Downloading RayDog files"
+
+curl -L -o $YD_AGENT_HOME/raydog.tgz "https://drive.google.com/uc?export=download&id=1MM0OpucCLO8wySHmi_U-YyD9TD8Vt9yz"
+tar -xf $YD_AGENT_HOME/raydog.tgz -C $YD_AGENT_HOME 
+
+echo "Modifying Ray script"
+RAYFILE=$VENV/bin/ray 
+cp $RAYFILE $RAYFILE.bak
+awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
 
 ################################################################################
 
 echo "Disabling firewall"
 ufw disable &> /dev/null
+
+################################################################################
+
+echo "Setting file/directory ownership to $YD_AGENT_USER"
+chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME
+
 
 # Note: the Agent configuration script will restart the Agent

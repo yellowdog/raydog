@@ -1,7 +1,10 @@
+import boto3
+import json
 import logging
 import dotenv
 import os
 import shortuuid
+import sys
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -26,35 +29,37 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NodeInfo:
     task_id: str
-    tags: Dict[str, str] = None
     task: Task = None
     node: Node = None
+    tags: Dict[str, str] = None
     ip: [str, str] = None
     terminated: bool = False
-
 
 class RayDogNodeProvider(NodeProvider):
 
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str) -> None:
         print("RayDogNodeProvider", cluster_name, provider_config)
         self.provider_config = provider_config
-        self.cluster_name = cluster_name
+        self.cluster_name = cluster_name.lower()
     
-        # Create a unique id for this cluster
-        shortuuid.set_alphabet("0123456789abcdefghijklmnopqrstuvwxyz")
-        self.cluster_id = cluster_name + '-' + shortuuid.uuid()
+        # Read any extra environment variables from a file
+        dotenv.load_dotenv(verbose=True, override=True)
 
         # Store info about the nodes we are creating
         self._node_info: Dict[str, NodeInfo] = {}
         self._raydog = None
 
+        # Read tag data from S3 bucket
+        self._tags = TagStore(provider_config['tag_store'], cluster_name)
+
+        # Pick an ID for this run, to avoid name clashes
+        shortuuid.set_alphabet("0123456789abcdefghijklmnopqrstuvwxyz")
+        self.uniqueid = shortuuid.uuid()[:8]
+
         # Read setup scripts
         self._init_script = self._get_script('initialization_script')
         self._head_script = self._get_script('head_start_ray_script')
         self._worker_script = self._get_script('worker_start_ray_script')
-
-        # Read any extra environment variables from a file
-        dotenv.load_dotenv(verbose=True, override=True)
 
         # Connect to YellowDog
         self._api_url = os.getenv("YD_API_URL")
@@ -116,12 +121,12 @@ class RayDogNodeProvider(NodeProvider):
     def node_tags(self, node_id: str) -> Dict[str, str]:
         """Returns the tags of the given node (string dict)."""
         print("node_tags", node_id)
-        return self._get_node_info(node_id).tags
+        return self._tags.get_tags(node_id)
 
-    def set_node_tags(self, node_id: str, tags: Dict[str, str]) -> None:
+    def set_node_tags(self, node_id: str, tags: Dict) -> None:
         """Sets the tag values (string dict) for the specified node."""
         print("set_node_tags", node_id, tags)
-        self._get_node_info(node_id).tags.update(tags)
+        self._tags.update_tags(node_id, tags)
 
     def _get_ip_addresses(self, node_id: str) -> (str, str):
         info = self._get_node_info(node_id)
@@ -166,7 +171,7 @@ class RayDogNodeProvider(NodeProvider):
                 yd_application_key_secret=self._api_key_secret,
                 yd_platform_api_url=self._api_url,
 
-                cluster_name=self.cluster_id,
+                cluster_name=self.cluster_name + '-' + self.uniqueid,
                 cluster_namespace=namespace,
                 cluster_tag=self.cluster_name,
                 cluster_lifetime=self._get_cluster_lifetime(),
@@ -178,6 +183,8 @@ class RayDogNodeProvider(NodeProvider):
             )
 
             self._raydog.build()
+
+            self._clear_node_info()
 
             node_id = self._raydog.head_node_task_id
             info = self._new_node_info(node_id, tags)
@@ -234,28 +241,41 @@ class RayDogNodeProvider(NodeProvider):
     @staticmethod
     def bootstrap_config(cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         """Bootstraps the cluster config by adding env defaults if needed."""
+        thisdir = os.path.dirname(__file__)
+        cluster_config['file_mounts'].update({
+            "/opt/yellowdog/agent/raydog" : thisdir + "/",
+            "/opt/yellowdog/agent/rayx" : thisdir + "/../rayx"
+        })
         print("bootstrap_config", cluster_config)
         return cluster_config
 
     # manage the list of information about nodes and the related YellowDog tasks
-    def _new_node_info(self, node_id, tags, task=None):
+    # NB: the node_id parameter for all these functions is really a Yellowdog task id
+    def _new_node_info(self, node_id, node_tags, task=None):
         if not task:
             task = self._read_task_info(node_id)
 
-        info = NodeInfo(task_id=node_id, tags=tags.copy(), task=task)
+        tags = self._tags.update_tags(node_id, node_tags)
+        info = NodeInfo(task_id=node_id, task=task, tags=tags)
         self._node_info[node_id] = info
-        return info
 
-    def _del_node_info(self, node_id):
-        if node_id in self._node_info:
-            del self._node_info[node_id]
+        return info
 
     def _get_node_info(self, node_id):
         info = self._node_info.get(node_id)
         if not info:
             raise Exception(f"Unknown node id {node_id}")
         return info
-    
+
+    def _del_node_info(self, node_id):
+        if node_id in self._node_info:
+            del self._node_info[node_id]
+            del self._tags[node_id]
+
+    def _clear_node_info(self):
+        self._node_info = {}
+        self._tags.reset()
+
     def _read_task_info(self, node_id):    
         return self._raydog.yd_client.work_client.get_task_by_id(node_id)
 
@@ -302,3 +322,40 @@ class RayDogNodeProvider(NodeProvider):
             return '\n'.join(script)
 
         return script
+    
+
+class TagStore:
+    s3 = None
+
+    def __init__(self, tag_store, cluster_name):
+        if not TagStore.s3:
+            TagStore.s3 = boto3.client('s3')
+
+        self.bucket = tag_store
+        self.key    = f"{cluster_name}.json"
+
+        self._read_from_s3()
+
+    def reset(self):
+        self.tags = {}
+
+    def get_tags(self, node_id: str) ->  Dict:
+        return self.tags.get(node_id, {})
+    
+    def update_tags(self, node_id: str, new_tags: Dict) -> Dict:
+        if node_id in self.tags:
+            self.tags[node_id].update(new_tags)
+        else:
+            self.tags[node_id] = new_tags
+
+        self._write_to_s3()
+        return self.tags[node_id]
+    
+    def _read_from_s3(self):
+        data = TagStore.s3.get_object(Bucket=self.bucket, Key=self.key)
+        self.tags = json.loads(data['Body'].read()) 
+        print(self.tags)
+
+    def _write_to_s3(self):
+        data = json.dumps(self.tags)
+        TagStore.s3.put_object(Bucket=self.bucket, Key=self.key, Body=data)
