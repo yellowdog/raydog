@@ -29,7 +29,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --disable-usage-stats --head --port=6379 --block
+ray start --head --port=6379 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
@@ -37,7 +37,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
+ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
 """
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
@@ -57,6 +57,7 @@ class WorkerNodeWorkerPool:
     provisioned_worker_pool_properties: ProvisionedWorkerPoolProperties
     task_group: TaskGroup
     task_prototype: Task
+    worker_pool_id: str | None = None
 
 
 class RayDogCluster:
@@ -187,7 +188,6 @@ class RayDogCluster:
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
         self.worker_node_worker_pools: dict[str, WorkerNodeWorkerPool] = {}
-        self.worker_node_worker_pool_ids: list[str] = []
 
     def add_worker_pool(
         self,
@@ -292,11 +292,12 @@ class RayDogCluster:
             return None  # No head node set up yet; wait for build()
 
         # Provision the new worker pool
-        worker_pool_id = self.yd_client.worker_pool_client.provision_worker_pool(
-            worker_node_worker_pool.compute_requirement_template_usage,
-            worker_node_worker_pool.provisioned_worker_pool_properties,
-        ).id
-        self.worker_node_worker_pool_ids.append(worker_pool_id)
+        worker_node_worker_pool.worker_pool_id = (
+            self.yd_client.worker_pool_client.provision_worker_pool(
+                worker_node_worker_pool.compute_requirement_template_usage,
+                worker_node_worker_pool.provisioned_worker_pool_properties,
+            ).id
+        )
 
         # Add the new task group
         work_requirement = self.yd_client.work_client.get_work_requirement_by_id(
@@ -315,7 +316,7 @@ class RayDogCluster:
             worker_node_worker_pool=worker_node_worker_pool,
         )
 
-        return worker_pool_id
+        return worker_node_worker_pool.worker_pool_id
 
     def build(
         self, head_node_build_timeout: timedelta | None = None
@@ -345,7 +346,7 @@ class RayDogCluster:
             ).id
         )
         for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
-            self.worker_node_worker_pool_ids.append(
+            worker_node_worker_pool.worker_pool_id = (
                 self.yd_client.worker_pool_client.provision_worker_pool(
                     worker_node_worker_pool.compute_requirement_template_usage,
                     worker_node_worker_pool.provisioned_worker_pool_properties,
@@ -418,7 +419,14 @@ class RayDogCluster:
                 "'remove_worker_pool()' method called on already shut-down cluster"
             )
 
-        if worker_pool_id not in self.worker_node_worker_pool_ids:
+        for (
+            worker_pool_internal_name,
+            worker_node_worker_pool,
+        ) in self.worker_node_worker_pools.items():
+            if worker_pool_id == worker_node_worker_pool.worker_pool_id:
+                name_to_remove = worker_pool_internal_name
+                break
+        else:
             raise Exception(
                 f"Worker pool ID '{worker_pool_id}' not "
                 "in current list of worker node worker pools"
@@ -430,7 +438,14 @@ class RayDogCluster:
         self.yd_client.compute_client.terminate_compute_requirement_by_id(
             worker_pool.computeRequirementId
         )
-        self.worker_node_worker_pool_ids.remove(worker_pool_id)
+        self.worker_node_worker_pools.pop(name_to_remove)
+
+    @property
+    def worker_pool_ids(self) -> list[str]:
+        """
+        Generate the current list of worker pool IDs.
+        """
+        return [x.worker_pool_id for _, x in self.worker_node_worker_pools.items()]
 
     def shut_down(self):
         """
@@ -457,9 +472,11 @@ class RayDogCluster:
             )
             self.head_node_worker_pool_id = None
 
-        for worker_pool_id in self.worker_node_worker_pool_ids:
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
-        self.worker_node_worker_pool_ids = []
+        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                worker_node_worker_pool.worker_pool_id
+            )
+        self.worker_node_worker_pools = {}
 
         self._is_shut_down = True
 

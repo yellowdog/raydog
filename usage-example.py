@@ -117,8 +117,8 @@ set -euo pipefail
 
 echo "Installing the YellowDog agent"
 cd /root || exit
-curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main/agent-install/linux/yd-agent-installer.sh \
-      | bash &> /dev/null
+curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads\
+/main/agent-install/linux/yd-agent-installer.sh | bash &> /dev/null
 
 ################################################################################
 YD_AGENT_USER="yd-agent"
@@ -167,7 +167,7 @@ VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
 echo "Installing Ray"
-uv pip install ray[client]
+uv pip install ray[default,client]
 
 echo "Setting file/directory ownership to $YD_AGENT_USER"
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.local $VENV $YD_AGENT_HOME/.cache

@@ -17,7 +17,8 @@ rm -rf raydog/__pycache__
 for ITEM in README.md \
             usage-example.py \
             raydog \
-            private-key
+            private-key \
+            jupyter-demo.ipynb
 do
   cp -r $ITEM $DIST/$RAYDOG/.
 done
