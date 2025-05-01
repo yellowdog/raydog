@@ -29,6 +29,8 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
+export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
+export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"
 ray start --disable-usage-stats --head --port=6379 --block
 """
 
@@ -37,13 +39,30 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
+
 ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
+"""
+
+OBSERVABILITY_NODE_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
+sudo apt -y install grafana mimir loki
+sudo /bin/systemctl daemon-reload
+sudo /bin/systemctl enable --now grafana-server
+sudo tee -a /etc/mimir/config.yml <<EOF
+ingester:
+    ring:
+        replication_factor: 1
+EOF
+sudo systemctl restart mimir
+sudo sed -i 's/enable_multi_variant_queries: true//' /etc/loki/config.yml
+sudo sed -i 's/log_level: debug/log_level: info/' /etc/loki/config.yml
+sudo systemctl restart loki
 """
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
 HEAD_NODE_TASK_GROUP_NAME = "head-node"
 WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
+OBSERVABILITY_NODE_TASK_GROUP_NAME = "observability-nodes"
 
 TASK_TYPE = "bash"
 
@@ -80,6 +99,13 @@ class RayDogCluster:
         head_node_metrics_enabled: bool | None = None,
         head_node_ray_start_script: str = HEAD_NODE_RAY_START_SCRIPT_DEFAULT,
         cluster_lifetime: timedelta | None = None,
+        enable_observability: bool = False,
+        observability_node_compute_requirement_template_id: str | None = None,
+        observability_node_instance_tags: dict[str, str] | None = None,
+        observability_node_images_id: str | None = None,
+        observability_node_userdata: str | None = None,
+        observability_node_metrics_enabled: bool = False,
+        observability_node_start_script: str = OBSERVABILITY_NODE_START_SCRIPT_DEFAULT,
     ):
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
@@ -116,6 +142,7 @@ class RayDogCluster:
         self._cluster_lifetime = cluster_lifetime
 
         head_node_naming = f"{cluster_name}-00"
+        observability_node_naming = f"{cluster_name}-observability-00"
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
@@ -151,8 +178,43 @@ class RayDogCluster:
             taskType=TASK_TYPE,
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
+            environment={}
         )
 
+        
+        self.enable_observability = enable_observability
+        self._observability_node_compute_requirement_template_usage = (
+            ComputeRequirementTemplateUsage(
+                templateId=observability_node_compute_requirement_template_id,
+                requirementName=f"{cluster_name}-observability",
+                requirementNamespace=cluster_namespace,
+                requirementTag=cluster_tag,
+                targetInstanceCount=1,
+                
+                imagesId=observability_node_images_id,
+                userData=observability_node_userdata,
+                instanceTags=observability_node_instance_tags,
+            )
+        )
+        
+        self._observability_node_provisioned_worker_pool_properties = (
+            ProvisionedWorkerPoolProperties(
+                createNodeWorkers=NodeWorkerTarget.per_node(1),
+                minNodes=0,
+                maxNodes=1,
+                workerTag=observability_node_naming,
+                metricsEnabled=observability_node_metrics_enabled,
+                idleNodeShutdown=self._auto_shut_down,
+                idlePoolShutdown=self._auto_shut_down,
+            )
+        )
+        
+        self._observability_node_task = Task(
+            taskType=TASK_TYPE,
+            taskData=observability_node_start_script,
+            arguments=["taskdata.txt"],
+        )
+        
         self._work_requirement = WorkRequirement(
             name=cluster_name,
             namespace=cluster_namespace,
@@ -169,6 +231,17 @@ class RayDogCluster:
                         taskTimeout=cluster_lifetime,
                     ),
                 ),
+                TaskGroup(
+                    name=OBSERVABILITY_NODE_TASK_GROUP_NAME,
+                    finishIfAnyTaskFailed=False,
+                    runSpecification=RunSpecification(
+                        taskTypes=[TASK_TYPE],
+                        workerTags=[observability_node_naming],
+                        namespaces=[cluster_namespace],
+                        exclusiveWorkers=True,
+                        taskTimeout=cluster_lifetime,
+                    ),
+                )
             ],
         )
 
@@ -188,6 +261,10 @@ class RayDogCluster:
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
         self.worker_node_worker_pools: dict[str, WorkerNodeWorkerPool] = {}
+        self.observability_node_private_ip: str | None = None
+        self.observability_node_worker_pool_id: str | None = None
+        self.observability_node_private_ip: str | None = None
+        self.observability_node_task_id: str | None = None
 
     def add_worker_pool(
         self,
@@ -338,6 +415,9 @@ class RayDogCluster:
 
         start_time = datetime.now(timezone.utc)
 
+            
+
+            
         # Provision all currently defined worker pools
         self.head_node_worker_pool_id = (
             self.yd_client.worker_pool_client.provision_worker_pool(
@@ -363,6 +443,38 @@ class RayDogCluster:
             self._work_requirement
         )
         self.work_requirement_id = self._work_requirement.id
+        
+        if self.enable_observability:
+            self._observability_node_worker_pool_id = (
+                self.yd_client.worker_pool_client.provision_worker_pool(
+                    self._observability_node_compute_requirement_template_usage,
+                    self._observability_node_provisioned_worker_pool_properties,
+                ).id
+            )
+            self.observability_node_task_id = (
+                self.yd_client.work_client.add_tasks_to_task_group_by_id(
+                    self._work_requirement.taskGroups[1].id,
+                    [self._observability_node_task],
+                )[0].id
+            )
+            while True:
+                observability_task = self.yd_client.work_client.get_task_by_id(self.observability_node_task_id)
+                if observability_task.status == TaskStatus.EXECUTING:
+                    break
+                if (
+                    head_node_build_timeout is not None
+                    and datetime.now(timezone.utc) - start_time >= head_node_build_timeout
+                ):
+                    self.shut_down()
+                    raise TimeoutError(
+                        "Timeout waiting for observability node task to enter EXECUTING state"
+                    )
+                    
+            self.observability_node_id = observability_task.workerId.replace("wrkr", "node")[:-2]
+            observability_node: Node = self.yd_client.worker_pool_client.get_node_by_id(self.observability_node_id)
+            self.observability_node_private_ip = observability_node.details.privateIpAddress
+            
+            self._head_node_task.environment.update({"OBSERVABILITY_HOST": self.observability_node_private_ip})
 
         # Add the head node task to the first task group
         self.head_node_task_id = (
@@ -371,10 +483,11 @@ class RayDogCluster:
                 [self._head_node_task],
             )[0].id
         )
+        
 
         while True:  # Check for execution of the head node task
             task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
-            if task.status == TaskStatus.EXECUTING:
+            if task.status == TaskStatus.EXECUTING and observability_task.status == TaskStatus.EXECUTING:
                 break
             if (
                 head_node_build_timeout is not None
@@ -385,14 +498,16 @@ class RayDogCluster:
                     "Timeout waiting for Ray head node task to enter EXECUTING state"
                 )
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
-
-        # Set the head node ID and get the node details
+            
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
         node: Node = self.yd_client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
         self.head_node_private_ip = node.details.privateIpAddress
         self.head_node_public_ip = node.details.publicIpAddress
+        
+
+        # Set the head node ID and get the node details
 
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, (_, worker_node_worker_pool) in enumerate(
@@ -471,6 +586,12 @@ class RayDogCluster:
                 self.head_node_worker_pool_id
             )
             self.head_node_worker_pool_id = None
+        
+        if self.observability_node_worker_pool_id is not None:
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                self.observability_node_worker_pool_id
+            )
+            self.observability_node_worker_pool_id = None
 
         for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
             self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
@@ -491,7 +612,10 @@ class RayDogCluster:
         """
 
         worker_node_worker_pool.task_prototype.environment.update(
-            {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
+            {
+                "RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip,
+                "OBSERVABILITY_HOST": self.observability_node_private_ip,
+            }
         )
         self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group_id,

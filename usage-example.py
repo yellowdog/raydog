@@ -3,6 +3,7 @@
 import logging
 import random
 import time
+import sys
 from datetime import datetime, timedelta
 from fractions import Fraction
 from os import getenv
@@ -26,12 +27,16 @@ def main():
             yd_application_key_id=getenv("YD_API_KEY_ID"),
             yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
-            cluster_namespace="pwt-ray",
+            cluster_namespace="jsm-ray",
             head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
             head_node_images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
-            cluster_tag="my-ray-tag",
+            cluster_tag="observability-testing",
             head_node_userdata=NODE_SETUP_SCRIPT,
             cluster_lifetime=timedelta(seconds=600),
+            enable_observability=True,
+            observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
+            observability_node_images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
+            observability_node_userdata=NODE_SETUP_SCRIPT,
         )
 
         # Add the worker pools
@@ -159,7 +164,7 @@ export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
 source $HOME/.local/bin/env
 
-PYTHON_VERSION="3.12.10"
+PYTHON_VERSION="3.13.3"
 echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
 uv venv --python $PYTHON_VERSION $VENV
@@ -172,6 +177,123 @@ uv pip install ray[client]
 echo "Setting file/directory ownership to $YD_AGENT_USER"
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.local $VENV $YD_AGENT_HOME/.cache
 
+echo "Installing Grafana Alloy"
+sudo apt -y install gpg
+sudo mkdir -p /etc/apt/keyrings/
+wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt-get update && sudo apt-get -y install alloy
+sudo systemctl disable alloy
+cat > /etc/alloy/config.alloy <<EOF
+local.file_match "ray" {
+    path_targets = [{"__path__" = "/tmp/ray/session_*/logs/*", "job" = "ray", "hostname" = constants.hostname}]
+}
+
+loki.source.file "ray" {
+    targets       = local.file_match.ray.targets
+    forward_to    = [loki.write.loki.receiver]
+    tail_from_end = true
+}
+
+loki.source.journal "journal" {
+  max_age       = "24h0m0s"
+  relabel_rules = discovery.relabel.logs_integrations_integrations_node_exporter_journal_scrape.rules
+  forward_to    = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+	endpoint {
+		url = string.format(
+			"http://%s:3100/loki/api/v1/push",
+			coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
+		)
+	}
+}
+
+prometheus.exporter.self "alloy" {}
+
+prometheus.exporter.unix "integrations_node_exporter" {
+  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+  enable_collectors = ["meminfo"]
+
+  filesystem {
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+    mount_timeout        = "5s"
+  }
+
+  netclass {
+    ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+
+  netdev {
+    device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+}
+
+discovery.relabel "integrations_node_exporter" {
+  targets = prometheus.exporter.unix.integrations_node_exporter.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    target_label = "job"
+    replacement = "integrations/node_exporter"
+  }
+}
+
+discovery.relabel "logs_integrations_integrations_node_exporter_journal_scrape" {
+  targets = []
+  
+  rule {
+    target_label = "instance"
+    replacement  = constants.hostname
+  }
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal__boot_id"]
+    target_label  = "boot_id"
+  }
+
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+prometheus.scrape "integrations_node_exporter" {
+  scrape_interval = "15s"
+  targets    = discovery.relabel.integrations_node_exporter.output
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.scrape "alloy" {
+	targets    = prometheus.exporter.self.alloy.targets
+	forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+	endpoint {
+		url = string.format(
+			"http://%s:8080/api/v1/push",
+			coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
+		)
+		headers = { "X-Scope-OrgID" = "1" }
+	}
+}
+EOF
 ################################################################################
 
 echo "Disabling firewall"
