@@ -233,7 +233,7 @@ class RayDogCluster:
             raise ValueError("worker_pool_node_count must be > 0")
 
         self._task_group_running_total += 1
-        worker_pool_index_str = str(self._task_group_running_total).zfill(3)
+        worker_pool_index_str = str(self._task_group_running_total).zfill(2)
         task_group_name = f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}"
         worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}"
 
