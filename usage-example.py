@@ -32,6 +32,7 @@ def main():
             cluster_tag="my-ray-tag",
             head_node_userdata=NODE_SETUP_SCRIPT,
             cluster_lifetime=timedelta(seconds=600),
+            head_node_metrics_enabled=True,
         )
 
         # Add the worker pools
