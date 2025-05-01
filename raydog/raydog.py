@@ -29,7 +29,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --disable-usage-stats --head --port=6379 --block
+ray start --head --port=6379 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
@@ -37,7 +37,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
+ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
 """
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
