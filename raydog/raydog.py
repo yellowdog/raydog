@@ -29,7 +29,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --head --port=6379 --num-cpus=0 --block
+ray start --head --port=6379 --num-cpus=0 --memory=0 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
