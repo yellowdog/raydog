@@ -20,6 +20,18 @@ import ray
 
 from raydog.raydog import RayDogCluster
 
+# This is needed temporarily because the preconfigured AMI doesn't
+# have the Ray dashboard installed
+
+RAY_HEAD_NODE_START_SCRIPT = r"""#!/usr/bin/bash
+trap "ray stop; echo Ray stopped" EXIT
+set -euo pipefail
+VENV=/opt/yellowdog/agent/venv
+source $VENV/bin/activate
+/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
+ray start --head --port=6379 --num-cpus=0 --memory=0 --block
+"""
+
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
@@ -38,6 +50,7 @@ def main():
             head_node_images_id="ami-00befc97a86859589",  # 'ray-test' AMI eu-west-2
             cluster_tag="my-ray-tag",
             head_node_metrics_enabled=True,
+            head_node_ray_start_script=RAY_HEAD_NODE_START_SCRIPT,
         )
 
         # Add the worker pools
