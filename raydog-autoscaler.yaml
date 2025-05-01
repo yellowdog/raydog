@@ -5,27 +5,26 @@ provider:
   namespace: raydog-example
   lifetime: 30m
 
-  tag_store: tech.yellowdog.devsandbox.raydog.tags
-
   initialization_script: file:example-node-setup.sh
 
   head_start_ray_script: 
-  - "#!/usr/bin/bash"
+  - "#!/bin/bash -x"
+  - export PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH
   - trap "ray stop; echo Ray stopped" EXIT
-  - set -euo pipefail
+  #- set -euo pipefail
   - VENV=/opt/yellowdog/agent/venv
   - source $VENV/bin/activate
-  - export "PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH"
   - ray stop
   - ray start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/raydog-autoscaler.yaml --block
 
+
   worker_start_ray_script:
-  - "#!/usr/bin/bash"
+  - "#!/bin/bash"
+  - export "PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH"
   - trap "ray stop; echo Ray stopped" EXIT
   - set -euo pipefail
   - VENV=/opt/yellowdog/agent/venv
   - source $VENV/bin/activate
-  - export "PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH"
   - ray stop
   - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
 

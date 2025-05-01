@@ -48,7 +48,7 @@ WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
 TASK_TYPE = "bash"
 
 HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
-IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 3.0
+IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 10.0
 
 
 @dataclass
@@ -151,6 +151,11 @@ class RayDogCluster:
             taskType=TASK_TYPE,
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
+            environment={
+                "YD_API_KEY_ID" : yd_application_key_id,
+                "YD_API_KEY_SECRET" : yd_application_key_secret,
+                "YD_API_URL" : yd_platform_api_url
+            }
         )
 
         self._work_requirement = WorkRequirement(
