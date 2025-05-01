@@ -2,9 +2,10 @@
 
 # Dimensioning the cluster: total workers is the product of the vars below
 # Each compute requirement is split across eu-west-2{a, b, c}
-# EBS limit of 500 per provisioning request
+# Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
+#       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 10
+WORKER_NODES_PER_POOL = 10  # Must be <= 1500, assuming split across 3 AZs
 NUM_WORKER_POOLS = 1
 
 # Sleep duration for each Ray task in the test job
