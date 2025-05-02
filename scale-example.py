@@ -5,7 +5,7 @@
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 10  # Must be <= 1500, assuming split across 3 AZs
+WORKER_NODES_PER_POOL = 5  # Must be <= 1500, assuming split across 3 AZs
 NUM_WORKER_POOLS = 1
 
 # Sleep duration for each Ray task in the test job
@@ -30,7 +30,7 @@ set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 /opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
-ray start --head --port=6379 --num-cpus=0 --memory=0 --block
+ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --block
 """
 
 
@@ -66,14 +66,14 @@ def main():
         # Build the Ray cluster
         print("Building Ray cluster")
         private_ip, public_ip = raydog_cluster.build(
-            head_node_build_timeout=timedelta(seconds=300)
+            head_node_build_timeout=timedelta(seconds=600)
         )
 
         cluster_address = f"ray://{public_ip}:10001"
         print(f"Head node started: {cluster_address}")
 
         input(
-            "Wait for worker nodes to join the cluster ... then hit enter to run the sample job "
+            "Wait for worker nodes to join the cluster ... then hit enter to run the sample job: "
         )
 
         # Run a simple application on the cluster
@@ -81,10 +81,11 @@ def main():
         ray_test_job(cluster_address)
         print("Finished")
 
-        input("Hit enter to shut down cluster ")
+        input("Hit enter to shut down cluster: ")
 
     finally:
         # Make sure the Ray cluster gets shut down
+        print("Shutting down Ray cluster")
         raydog_cluster.shut_down()
 
 
