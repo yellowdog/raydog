@@ -5,11 +5,13 @@
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
+MY_USERNAME = "pwt"  # Note; Match YD naming rules, lower case, etc.
+
 WORKER_NODES_PER_POOL = 5  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 1
+NUM_WORKER_POOLS = 2
 
 # Sleep duration for each Ray task in the test job
-TASK_SLEEP_TIME_SECONDS = 30
+TASK_SLEEP_TIME_SECONDS = 60
 
 import logging
 import time
@@ -20,18 +22,6 @@ import dotenv
 import ray
 
 from raydog.raydog import RayDogCluster
-
-# This is needed temporarily because the preconfigured AMI doesn't
-# have the Ray dashboard installed
-
-RAY_HEAD_NODE_START_SCRIPT = r"""#!/usr/bin/bash
-trap "ray stop; echo Ray stopped" EXIT
-set -euo pipefail
-VENV=/opt/yellowdog/agent/venv
-source $VENV/bin/activate
-/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
-ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --block
-"""
 
 
 def main():
@@ -46,12 +36,11 @@ def main():
             yd_application_key_id=getenv("YD_API_KEY_ID"),
             yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
-            cluster_namespace="pwt-ray",
-            head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
-            head_node_images_id="ami-00befc97a86859589",  # 'ray-test' AMI eu-west-2
-            cluster_tag="my-ray-tag",
+            cluster_namespace=f"{MY_USERNAME}-ray",
+            head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big",
+            head_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
+            cluster_tag=f"{MY_USERNAME}-ray-testing",
             head_node_metrics_enabled=True,
-            head_node_ray_start_script=RAY_HEAD_NODE_START_SCRIPT,
         )
 
         # Add the worker pools
@@ -59,7 +48,7 @@ def main():
             raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker",
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
-                worker_node_images_id="ami-00befc97a86859589",  # 'ray test' AMI eu-west-2
+                worker_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
                 worker_node_metrics_enabled=True,
             )
 
@@ -113,6 +102,8 @@ def ray_test_job(cluster_address):
     # Print results and duration
     print(f"Results: {results[:5]} ...")  # Show first 5 results
     print(f"Total duration: {time.time() - start_time} seconds")
+
+    ray.shutdown()
 
 
 # Entry point
