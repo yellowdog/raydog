@@ -31,7 +31,7 @@ VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
 export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"
-ray start --disable-usage-stats --head --port=6379 --block
+ray start --head --port=6379 --num-cpus=0 --memory=0 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
@@ -40,7 +40,7 @@ set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 
-ray start --disable-usage-stats --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
+ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
 """
 
 OBSERVABILITY_NODE_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash

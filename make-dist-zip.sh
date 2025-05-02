@@ -6,6 +6,7 @@ DIST="dist"
 RAYDOG="raydog"
 COMMIT=$(git rev-parse --short HEAD)
 VERSION_FILE="version.txt"
+DATESTAMP=$(date -u "+%Y%m%d%H%M%S")
 
 rm -rf "${DIST:?}/$RAYDOG"
 mkdir -p "$DIST/$RAYDOG"
@@ -26,7 +27,7 @@ done
 chmod 0600 $DIST/$RAYDOG/private-key
 
 cd $DIST || exit
-ZIPFILE=raydog-$COMMIT.zip
+ZIPFILE=raydog-$DATESTAMP-$COMMIT.zip
 echo "Creating $ZIPFILE ..."
 zip -r $ZIPFILE $RAYDOG
 echo "Done"
