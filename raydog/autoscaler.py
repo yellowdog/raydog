@@ -2,13 +2,18 @@ import json
 import logging
 import os
 import random
+import subprocess
 import sys
+import time
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from datetime import timedelta
 
 from ray.autoscaler.node_provider import NodeProvider
+from ray.autoscaler.command_runner import CommandRunnerInterface
+
+from ray.autoscaler._private.cli_logger import cli_logger
 
 from yellowdog_client.model import (
     ApiKey, 
@@ -40,28 +45,43 @@ class NodeInfo:
 class RayDogNodeProvider(NodeProvider):
 
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str) -> None:
+    
         logger.setLevel(logging.DEBUG)
+        cli_logger.configure(verbosity=2)
 
         logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
         #logger.debug(f"arguments: {sys.argv}")
         #logger.debug(f"env: {os.environ}")
         
-        self.cluster_name = cluster_name.lower()
+        cluster_name = cluster_name.lower()
+        super().__init__(provider_config, cluster_name)
 
-        self.provider_config = provider_config
         self.namespace = self.provider_config['namespace']
+
+        # If we're running client-side, the bootstrap function puts the auth info into the provider_config
+        self._auth_config = self.provider_config.get('auth')
+ 
+         # Make sure various variables exist. Values come later
+        self._transfer_pending = None
+        self._cmd_runner = None
+        self._node_info = {}
+        self._ray_tags = {}
 
         # Initialise the connection to YellowDog
         self._connect_to_yellowdog()
 
         # Work out whether this is the head node (ie. autoscaling config provided & running as the YD agent) 
         configfile = self._get_autoscaling_config_option()
+        logger.debug(f"configfile: {configfile}")
+
         if configfile:
             self._basepath = os.path.dirname(configfile) 
             self._on_head_node = self._is_running_as_yd_agent()
         else:
             self._basepath = '.'
             self._on_head_node = False
+
+        logger.debug(f"_on_head_node: {self._on_head_node}")
 
         # Pick an ID for this run, to avoid name clashes
         self.uniqueid = ''.join(random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8))
@@ -75,27 +95,29 @@ class RayDogNodeProvider(NodeProvider):
         if self._on_head_node:
             # Running on the head node
             self._raydog = RayDogClusterHead(self._ydclient)
-            self._read_tags_from_file()
+
+            # Wait for the client to upload initial tag data
+            self._load_tags_sent_from_client()
         else:
             # Running on a client node
-            headid = self._find_head_node()
-            if headid:
+            self._headid = self._find_head_node()
+            if self._headid:
                 # Connect to an existing head node
-                self._raydog = RayDogClusterRemote(self._ydclient, headid)
-                self._read_tags_from_remote_server(headid)
+                self._raydog = RayDogClusterRemote(self._ydclient, self._headid)
+
+                # Will get the tags from the head node later
+                #self._init_node_info()
+                self._pull_tags_from_head_node()
             else:
                 # Ray will create a new head node ... later
                 self._raydog = None
-                self._init_tags()
+                #self._init_node_info()
 
         # Store info about the nodes we are creating
-        self._node_info: Dict[str, NodeInfo] = {}
-
-        self._tags = TagStore(cluster_name)
     
     def _is_running_as_yd_agent(self):
         """Detect when the process is running as the YellowDog agent"""
-        return (os.environ.get("USER") == "yd-agent") or (os.environ.get("LOGNAME") == "yd-agent")
+        return ((os.environ.get("USER") == "yd-agent") or (os.environ.get("LOGNAME") == "yd-agent"))
 
     def _get_autoscaling_config_option(self):
         """Get the path for the autoscaling config file, if set"""
@@ -104,9 +126,6 @@ class RayDogNodeProvider(NodeProvider):
                 return arg.split('=')[1]
         return None
     
-
-
-
     def _connect_to_yellowdog(self):
         """Connect to the YellowDog API, using credentials from environment variables and/or a .env file
         """
@@ -144,7 +163,7 @@ class RayDogNodeProvider(NodeProvider):
         # is there a live compute requirement with the right name?
         candidates = self._ydclient.work_client.get_work_requirements(
             WorkRequirementSearch(
-                # statuses=[WorkRequirementStatus.RUNNING],
+                statuses=[WorkRequirementStatus.RUNNING],
                 namespace=self.namespace 
             )
         )
@@ -155,14 +174,6 @@ class RayDogNodeProvider(NodeProvider):
                  
         return None
 
-    def _read_tags_from_file(self):
-        pass
-
-    def _read_tags_from_remote_server(self, node_id):
-        pass
-
-    def _init_tags(self):
-        pass
 
     def __del__(self):
         """Shutdown the cluster"""
@@ -211,12 +222,16 @@ class RayDogNodeProvider(NodeProvider):
     def node_tags(self, node_id: str) -> Dict[str, str]:
         """Returns the tags of the given node (string dict)."""
         logger.debug(f"node_tags {node_id}")
-        return self._tags.get_tags(node_id)
+        return self._ray_tags.get(node_id, {})
 
     def set_node_tags(self, node_id: str, tags: Dict) -> None:
         """Sets the tag values (string dict) for the specified node."""
         logger.debug(f"set_node_tags {node_id} {tags}")
-        self._tags.update_tags(node_id, tags)
+
+        if node_id in self._ray_tags:
+            self._ray_tags[node_id].update(tags)
+        else:
+            raise Exception(f"Unknown node id {node_id}")
 
     def _get_ip_addresses(self, node_id: str) -> (str, str):
         info = self._get_node_info(node_id)
@@ -274,12 +289,14 @@ class RayDogNodeProvider(NodeProvider):
 
             self._raydog.build()
 
-            self._clear_node_info()
-
-            node_id = self._raydog.head_node_task_id
-            info = self._new_node_info(node_id, tags)
+            # create the initial set of tags 
+            self._headid = self._raydog.head_node_task_id
+            info = self._new_node_info(self._headid, tags)
             info.ip = ( self._raydog.head_node_public_ip, self._raydog.head_node_private_ip )
 
+            # need to send tags to the head node
+            self._push_tags_to_head_node()
+            #self._transfer_pending = RayDogNodeProvider._push_tags_to_head_node
         else:
             # is there a worker pool for this worker type?
             pool = self._raydog.worker_node_worker_pools.get(node_name)
@@ -326,6 +343,10 @@ class RayDogNodeProvider(NodeProvider):
     def prepare_for_head_node(self, cluster_config: Dict[str, Any]) -> Dict[str, Any]:
         """Returns a new cluster config with custom configs for head node."""
         logger.info(f"prepare_for_head_node {cluster_config}")
+
+        # new head node started, send it the tags we have created so far
+        #self._push_tags_to_head_node()
+
         return cluster_config
 
     @staticmethod
@@ -337,37 +358,135 @@ class RayDogNodeProvider(NodeProvider):
         #     "/opt/yellowdog/agent/rayx" : thisdir + "/../rayx"
         # })
         logger.info(f"bootstrap_config {cluster_config}")
+
+        # copy the global auth info to the provider, so the constructor sees it
+        cluster_config["provider"]["auth"] = cluster_config["auth"].copy()
         return cluster_config
 
     # manage the list of information about nodes and the related YellowDog tasks
     # NB: the node_id parameter for all these functions is really a Yellowdog task id
-    def _new_node_info(self, node_id, node_tags, task=None):
+    def _init_node_info(self) -> None:
+        self._node_info: Dict[str, NodeInfo] = {}
+        self._ray_tags: Dict[str, str] = {}
+
+    def _new_node_info(self, node_id:str, ray_tags:Dict, task:Task=None) -> NodeInfo:
         if not task:
             task = self._read_task_info(node_id)
 
-        tags = self._tags.update_tags(node_id, node_tags)
-        info = NodeInfo(task_id=node_id, task=task, tags=tags)
+        info = NodeInfo(task_id=node_id, task=task, tags=ray_tags)
         self._node_info[node_id] = info
+        self._ray_tags[node_id] = info.tags
 
         return info
 
-    def _get_node_info(self, node_id):
+    def _get_node_info(self, node_id:str) -> NodeInfo:
+        # transfer tags to/from the head node, if needed 
+        # if self._transfer_pending:
+        #     self._transfer_pending(self)
+        #     self._transfer_pending = None
+
+
         info = self._node_info.get(node_id)
         if not info:
             raise Exception(f"Unknown node id {node_id}")
         return info
 
-    def _del_node_info(self, node_id):
+    def _del_node_info(self, node_id:str) -> None:
         if node_id in self._node_info:
             del self._node_info[node_id]
-            del self._tags[node_id]
+            del self._ray_tags[node_id]
 
-    def _clear_node_info(self):
+
+    def _get_head_node_command_runner(self) -> CommandRunnerInterface :
+        """Create a CommandRunner object for the head node"""
+        if not self._cmd_runner:
+            self._cmd_runner = self.get_command_runner(
+                "Head Node",
+                self._headid,
+                self._auth_config,
+                self.cluster_name,
+                subprocess,
+                False,
+            )
+        return self._cmd_runner
+
+    def _get_tag_file_name(self, on_head:bool, client_tags:bool=False):
+        dirname = "/opt/yellowdog/agent/tags" if on_head else ".tags" 
+        suffix = "-client" if client_tags else "" 
+        return f"{dirname}/{self.cluster_name}{suffix}.json"
+
+    def _load_tags_sent_from_client(self):
+        """Get tags uploaded from the client, with initial values for the head node"""
+
+        # wait for the file to arrive
+        filename = self._get_tag_file_name(True, True)
+        while not os.path.exists(filename):
+            logger.info(f"Waiting for {filename}")
+            time.sleep(5)
+
+        # initialise the tag store   
+        self._read_tags_from_file(filename)
+
+    def _pull_tags_from_head_node(self) -> None:
+        """Read tags from the head node"""
+        remotefile = self._get_tag_file_name(True)
+        localfile = self._get_tag_file_name(False)
+
+        runner = self._get_head_node_command_runner()
+        runner.run_rsync_down(remotefile, localfile)
+
+        #TODO: what if the file doesn't exist yet?
+        self._read_tags_from_file(localfile)
+
+    def _push_tags_to_head_node(self) -> None:
+        """Upload tag data to the head node"""
+        remotefile = self._get_tag_file_name(True, True)
+        localfile = self._get_tag_file_name(False, True)
+
+        self._write_tags_to_file(localfile)
+        runner = self._get_head_node_command_runner()
+        runner.run_rsync_up(localfile, remotefile)
+
+    def _write_tags_to_file(self, filename:str=None) -> None:
+        """Store all the Ray tags in a file"""
+
+        # Act like we're on the head node, unless told otherwise
+        if not filename:
+            filename = self._get_tag_file_name(True)
+
+        # Make sure the directory exists
+        dirname = os.path.dirname(filename)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        # Save as JSON
+        with open(filename, 'w') as f:
+            json.dump(self._ray_tags, f)
+ 
+    def _read_tags_from_file(self, filename:str) -> Dict[str, Any]:
+        """Read the Ray tags from a file"""
+
+        # Read the JSON file
+        with open(filename) as f:
+            contents = f.read()
+        newtags = json.loads(contents)
+
+        # Merge into the info we  already have
+        oldinfo = self._node_info
+
         self._node_info = {}
-        self._tags.reset()
+        self._ray_tags = newtags
+        for node_id, tags in newtags.items():
+            node = oldinfo.get(node_id)
+            if node:
+                node.tags = tags
+                self._node_info[node_id] = node
+            else:
+                self._new_node_info(node_id, tags)
 
+    # 
     def _read_task_info(self, node_id):    
-        return self._raydog.yd_client.work_client.get_task_by_id(node_id)
+        return self._ydclient.work_client.get_task_by_id(node_id)
 
     def _get_cluster_lifetime(self):
         """Get the cluster lifetime from the config. If the lifetime ends with 'd' its in days, 
@@ -423,54 +542,3 @@ class RayDogClusterHead(RayDogCluster):
     def __init__(self, ydlient):
         pass
 
-
-class TagStore:
-    filename = None
-
-    def __init__(self, cluster_name):
-        self.key = f"{cluster_name}.json"
-        self.reset()
-
-    def reset(self):
-        self.tags = {}
-
-    def get_tags(self, node_id: str) ->  Dict:
-        return self.tags.get(node_id, {})
-    
-    def update_tags(self, node_id: str, new_tags: Dict) -> Dict:
-        if node_id in self.tags:
-            self.tags[node_id].update(new_tags)
-        else:
-            self.tags[node_id] = new_tags
-
-        return self.tags[node_id]
-    
-
-class ClientTagStore(TagStore):
-    def __init__(self, cluster_name: str, cmd_runner):
-        self.cluster_name = cluster_name
-        self.cmd_runner = cmd_runner
-
-    def _pull_tags_from_head_node(self):
-        remotefile = f"/opt/yellowdog/agent/raydog/{self.cluster_name}.json"
-        localfile  = f".tags/{self.cluster_name}.json"
-
-        self.cmd_runner.run_rsync_down(remotefile, localfile)
-
-        with open(localfile) as f:
-            contents = f.read()
-
-        return json.loads(contents)
-
-    def _push_tags_to_head_node(self):
-        remotefile = f"/opt/yellowdog/agent/raydog/{self.cluster_name}-client.json"
-        localfile  = f".tags/{self.cluster_name}-client.json"
-
-        with open(localfile, 'w') as f:
-            json.dump(self.tags, f)
- 
-        self.cmd_runner.run_rsync_up(localfile, remotefile)
-
-
-class HeadTagStore(TagStore):
-    pass

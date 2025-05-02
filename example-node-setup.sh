@@ -63,6 +63,8 @@ echo "Downloading RayDog files"
 curl -L -o $YD_AGENT_HOME/raydog.tgz "https://drive.google.com/uc?export=download&id=1MM0OpucCLO8wySHmi_U-YyD9TD8Vt9yz"
 tar -xf $YD_AGENT_HOME/raydog.tgz -C $YD_AGENT_HOME 
 
+mkdir -p $YD_AGENT_HOME/tags
+
 echo "Modifying Ray script"
 RAYFILE=$VENV/bin/ray 
 cp $RAYFILE $RAYFILE.bak

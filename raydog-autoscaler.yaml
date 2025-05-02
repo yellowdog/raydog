@@ -17,7 +17,6 @@ provider:
   - ray stop
   - ray start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/raydog-autoscaler.yaml --block
 
-
   worker_start_ray_script:
   - "#!/bin/bash"
   - export "PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH"
@@ -55,7 +54,6 @@ head_node_type: ray_head_default
 auth:
   ssh_user: yd-agent
   ssh_private_key: private-key
-
 
 # The maximum number of workers nodes to launch in addition to the head
 # node.
