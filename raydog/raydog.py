@@ -115,7 +115,7 @@ class RayDogCluster:
         self._cluster_tag = cluster_tag
         self._cluster_lifetime = cluster_lifetime
 
-        head_node_naming = f"{cluster_name}-00"
+        head_node_naming = f"{cluster_name}-00-head"
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
@@ -235,7 +235,7 @@ class RayDogCluster:
         self._task_group_running_total += 1
         worker_pool_index_str = str(self._task_group_running_total).zfill(2)
         task_group_name = f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}"
-        worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}"
+        worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}-wrkrs"
 
         worker_node_worker_pool = WorkerNodeWorkerPool(
             compute_requirement_template_usage=ComputeRequirementTemplateUsage(
