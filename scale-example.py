@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
+MY_USERNAME = "pwt"  # Note; Match YD naming rules, lower case, etc.
+
 # Dimensioning the cluster: total workers is the product of the vars below
 # Each compute requirement is split across eu-west-2{a, b, c}
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
-MY_USERNAME = "pwt"  # Note; Match YD naming rules, lower case, etc.
-
-WORKER_NODES_PER_POOL = 5  # Must be <= 1500, assuming split across 3 AZs
+WORKER_NODES_PER_POOL = 1  # Must be <= 1500, assuming split across 3 AZs
 NUM_WORKER_POOLS = 2
+TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 60
@@ -37,7 +38,11 @@ def main():
             yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
             cluster_namespace=f"{MY_USERNAME}-ray",
-            head_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big",
+            head_node_compute_requirement_template_id=(
+                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+                if TOTAL_WORKER_NODES > 1000
+                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+            ),
             head_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
             cluster_tag=f"{MY_USERNAME}-ray-testing",
             head_node_metrics_enabled=True,
@@ -93,10 +98,7 @@ def ray_test_job(cluster_address):
     ray.init(address=cluster_address, logging_level=logging.ERROR)
 
     start_time = time.time()
-    task_refs = [
-        ray_worker_task.remote(i)
-        for i in range(NUM_WORKER_POOLS * WORKER_NODES_PER_POOL)
-    ]
+    task_refs = [ray_worker_task.remote(i) for i in range(TOTAL_WORKER_NODES)]
     results = ray.get(task_refs)  # Wait for all tasks to complete
 
     # Print results and duration
