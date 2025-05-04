@@ -440,6 +440,30 @@ class RayDogCluster:
         )
         self.worker_node_worker_pools.pop(name_to_remove)
 
+    def remove_worker_pool_by_internal_name(self, internal_name: str):
+        """
+        Remove a worker pool by its internal name. Raises exception if
+        worker pool not found.
+
+        :param worker_pool_id: the internal name of the worker pool to remove.
+        """
+        if self._is_shut_down:
+            raise Exception(
+                "'remove_worker_pool_by_internal_name()' "
+                "method called on already shut-down cluster"
+            )
+
+        worker_node_worker_pool = self.worker_node_worker_pools.get(internal_name)
+        if worker_node_worker_pool is None:
+            raise Exception(
+                f"Worker pool with internal name '{internal_name}' not found"
+            )
+
+        if worker_node_worker_pool.worker_pool_id is not None:
+            self.remove_worker_pool(worker_node_worker_pool.worker_pool_id)
+        else:
+            self.worker_node_worker_pools.pop(internal_name)
+
     @property
     def worker_pool_ids(self) -> list[str]:
         """
