@@ -445,7 +445,7 @@ class RayDogCluster:
         Remove a worker pool by its internal name. Raises exception if
         worker pool not found.
 
-        :param worker_pool_id: the internal name of the worker pool to remove.
+        :param internal_name: the internal name of the worker pool to remove.
         """
         if self._is_shut_down:
             raise Exception(
@@ -469,7 +469,18 @@ class RayDogCluster:
         """
         Generate the current list of worker pool IDs.
         """
-        return [x.worker_pool_id for _, x in self.worker_node_worker_pools.items()]
+        return [
+            x.worker_pool_id
+            for x in self.worker_node_worker_pools.values()
+            if x.worker_pool_id is not None
+        ]
+
+    @property
+    def worker_pool_internal_names(self) -> list[str]:
+        """
+        Generate the current list of worker pool internal names.
+        """
+        return list(self.worker_node_worker_pools.keys())
 
     def shut_down(self):
         """
