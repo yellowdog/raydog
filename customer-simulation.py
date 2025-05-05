@@ -5,6 +5,9 @@ import time
 import numpy as np
 import ray
 
+# Connect to the Ray cluster
+ray.init(address=f"ray://localhost:10001")
+
 
 def create_array_with_mean_max(mean_value, max_value, size):
     # Choose a random number of elements to be max_value
@@ -82,28 +85,35 @@ all_tasks.extend(a1_tasks)
 b1_tasks = set(run_group_b1())
 all_tasks.extend(b1_tasks)
 all_tasks.extend(run_group_c())
-all_tasks.attend(run_group_e())
-all_tasks.attend(run_group_f())
-all_tasks.attend(run_group_g())
-all_tasks.attend(run_group_h())
+all_tasks.extend(run_group_e())
+all_tasks.extend(run_group_f())
+all_tasks.extend(run_group_g())
+all_tasks.extend(run_group_h())
 a2_tasks = set()
 
-while all_tasks:
-    ready_tasks, all_tasks = ray.wait(all_tasks, num_returns=1)
-    if ready_tasks[0] in a1_tasks:
-        a1_tasks.remove(ready_tasks[0])
-        if not a1_tasks:
-            a2_tasks = run_group_a2()
-            all_tasks.attend(a2_tasks)
-        continue
-    if ready_tasks[0] in b1_tasks:
-        b1_tasks.remove(ready_tasks[0])
-        if not b1_tasks:
-            all_tasks.attend(run_group_b2())
-        continue
-    if ready_tasks[0] in a2_tasks:
-        a2_tasks.remove(ready_tasks[0])
-        if not a2_tasks:
-            all_tasks.attend(run_group_a3())
+try:
+    while all_tasks:
+        ready_tasks, all_tasks = ray.wait(all_tasks, num_returns=1)
+        if ready_tasks[0] in a1_tasks:
+            a1_tasks.remove(ready_tasks[0])
+            if not a1_tasks:
+                a2_tasks = run_group_a2()
+                all_tasks.extend(a2_tasks)
+            continue
+        if ready_tasks[0] in b1_tasks:
+            b1_tasks.remove(ready_tasks[0])
+            if not b1_tasks:
+                all_tasks.extend(run_group_b2())
+            continue
+        if ready_tasks[0] in a2_tasks:
+            a2_tasks.remove(ready_tasks[0])
+            if not a2_tasks:
+                all_tasks.extend(run_group_a3())
+
+except:
+    pass
+
+finally:
+    ray.shutdown()
 
 print("All Done!")
