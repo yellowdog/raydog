@@ -7,12 +7,12 @@ MY_USERNAME = "pwt"  # Note; Match YD naming rules, lower case, etc.
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 1  # Must be <= 1500, assuming split across 3 AZs
+WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
 NUM_WORKER_POOLS = 2
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
-TASK_SLEEP_TIME_SECONDS = 60
+TASK_SLEEP_TIME_SECONDS = 10
 
 import logging
 import time
@@ -21,13 +21,14 @@ from os import getenv
 
 import dotenv
 import ray
+from sshtunnel import SSHTunnelForwarder
 
 from raydog.raydog import RayDogCluster
 
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
-
+    raydog_cluster: RayDogCluster | None = None
     try:
         # Read any extra environment variables from a file
         dotenv.load_dotenv(verbose=True, override=True)
@@ -51,7 +52,9 @@ def main():
         # Add the worker pools
         for _ in range(NUM_WORKER_POOLS):
             raydog_cluster.add_worker_pool(
-                worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker",
+                worker_node_compute_requirement_template_id=(
+                    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
+                ),
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
                 worker_node_metrics_enabled=True,
@@ -62,6 +65,11 @@ def main():
         private_ip, public_ip = raydog_cluster.build(
             head_node_build_timeout=timedelta(seconds=600)
         )
+
+        # Allow time for the API and Dashboard to start before creating
+        # the SSH tunnels
+        time.sleep(20)
+        start_ssh_tunnels(public_ip)
 
         cluster_address = f"ray://{public_ip}:10001"
         print(f"Head node started: {cluster_address}")
@@ -78,9 +86,11 @@ def main():
         input("Hit enter to shut down cluster: ")
 
     finally:
-        # Make sure the Ray cluster gets shut down
-        print("Shutting down Ray cluster")
-        raydog_cluster.shut_down()
+        # Make sure the Ray cluster gets shut down, and the SSH tunnels stopped
+        if raydog_cluster is not None:
+            print("Shutting down Ray cluster")
+            raydog_cluster.shut_down()
+        stop_ssh_tunnels()
 
 
 # Define a remote task that uses 1 CPU
@@ -108,6 +118,59 @@ def ray_test_job(cluster_address):
     ray.shutdown()
 
 
+CLIENT_TUNNEL: SSHTunnelForwarder | None = None
+DASHBOARD_TUNNEL: SSHTunnelForwarder | None = None
+
+
+def start_ssh_tunnels(head_node_ip_addr: str):
+    """
+    Start SSH tunnels for the Ray client and dashboard.
+    """
+
+    print("Setting up SSH tunnels for Ray client and dashboard")
+
+    global CLIENT_TUNNEL, DASHBOARD_TUNNEL
+
+    CLIENT_TUNNEL = SSHTunnelForwarder(
+        head_node_ip_addr,
+        ssh_username="yd-agent",
+        ssh_pkey="private-key",
+        remote_bind_address=("127.0.0.1", 10001),
+        local_bind_address=("127.0.0.1", 10001),
+    )
+    CLIENT_TUNNEL.start()
+
+    DASHBOARD_TUNNEL = SSHTunnelForwarder(
+        head_node_ip_addr,
+        ssh_username="yd-agent",
+        ssh_pkey="private-key",
+        remote_bind_address=("127.0.0.1", 8265),
+        local_bind_address=("127.0.0.1", 8265),
+    )
+    DASHBOARD_TUNNEL.start()
+
+
+def stop_ssh_tunnels():
+    """
+    Stop the SSH tunnels (if present).
+    """
+    try:
+        if CLIENT_TUNNEL is not None:
+            print("Stopping Ray client SSH tunnel")
+            CLIENT_TUNNEL.stop(force=True)
+    except:
+        pass
+    try:
+        if DASHBOARD_TUNNEL is not None:
+            print("Stopping Ray dashboard SSH tunnel")
+            DASHBOARD_TUNNEL.stop(force=True)
+    except:
+        pass
+
+
 # Entry point
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Stopped.")
