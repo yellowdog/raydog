@@ -323,8 +323,10 @@ class RayDogCluster:
     ) -> (str, str | None):
         """
         Build the cluster. This method will block until the Ray head node
-        is ready, but note that Ray worker nodes will still be configuring
-        and joining the cluster.
+        is ready.
+
+        Note that Ray worker nodes will still be in the process
+        of configuring and joining the cluster after this method returns.
 
         :param head_node_build_timeout: an optional timeout for building the head node;
             if the timeout expires before the head node task is executing, a TimeoutError
@@ -507,10 +509,11 @@ class RayDogCluster:
             )
             self.head_node_worker_pool_id = None
 
-        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                worker_node_worker_pool.worker_pool_id
-            )
+        for worker_node_worker_pool in self.worker_node_worker_pools.values():
+            if worker_node_worker_pool.worker_pool_id is not None:
+                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                    worker_node_worker_pool.worker_pool_id
+                )
         self.worker_node_worker_pools = {}
 
         self._is_shut_down = True
