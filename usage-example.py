@@ -108,7 +108,7 @@ def estimate_pi(cluster_address):
 
         dur = datetime.now() - start
 
-        print(f"Estimation took {dur} seconds")        
+        print(f"Estimation took {dur} seconds")
         print(f"The average estimate is {mypi} =", float(mypi))
 
         if dur >= mintime:
