@@ -1,3 +1,4 @@
 black
 isort
 sshtunnel
+ray[client]
