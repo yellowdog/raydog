@@ -54,7 +54,7 @@ class RayTunnels:
         """
         Stop the SSH tunnels.
 
-        :param ignore_errors: suppress exceptions and proceed.
+        :param ignore_errors: suppress exceptions and proceed
         """
         for tunnel in self._ray_tunnels:
             try:
