@@ -69,7 +69,7 @@ def main():
 
         # Allow time for the API and Dashboard to start before creating
         # the SSH tunnels
-        time.sleep(20)
+        time.sleep(10)
         ssh_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
@@ -77,8 +77,11 @@ def main():
         )
         ssh_tunnels.start_tunnels()
 
-        cluster_address = f"ray://{public_ip}:10001"
-        print(f"Head node started: {cluster_address}")
+        cluster_address = "ray://localhost:10001"
+        print(
+            f"Ray head node and SSH tunnels started; using client at: {cluster_address}"
+        )
+        print("Ray dashboard is available at: http://localhost:8265")
 
         input(
             "Wait for worker nodes to join the cluster ... then hit enter to run the sample job: "
