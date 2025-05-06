@@ -30,8 +30,10 @@ set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
 export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
+export RAY_GRAFANA_IFRAME_HOST="http://localhost:3000"
 export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"
-ray start --head --port=6379 --num-cpus=0 --memory=0 --block
+alloy run /etc/alloy/config.alloy &
+ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
@@ -39,23 +41,69 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-
-ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block
+alloy run /etc/alloy/config.alloy &
+ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999 --block
 """
 
 OBSERVABILITY_NODE_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
-sudo apt -y install grafana mimir loki
-sudo /bin/systemctl daemon-reload
-sudo /bin/systemctl enable --now grafana-server
-sudo tee -a /etc/mimir/config.yml <<EOF
-ingester:
-    ring:
-        replication_factor: 1
+# Run ray head node so we can get the dashboards out
+VENV=/opt/yellowdog/agent/venv
+source $VENV/bin/activate
+ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999
+
+# Install and configure Grafana, Mimir, and Loki
+sudo apt -y install grafana prometheus loki
+sudo tee /etc/grafana/provisioning/datasources/prometheus.yaml <<EOF
+datasources:
+- name: Prometheus
+  type: prometheus
+  url: http://localhost:9090
 EOF
-sudo systemctl restart mimir
+sudo tee /etc/grafana/provisioning/datasources/loki.yaml <<EOF
+datasources:
+- name: loki
+  type: loki
+  url: http://localhost:3100
+EOF
+sudo tee /etc/grafana/provisioning/dashboards/ray.yaml <<EOF
+apiVersion: 1
+providers:
+- name: Ray
+  folder: Ray
+  type: file
+  options:
+    path: /var/lib/grafana/dashboards/ray
+EOF
+sudo tee -a /etc/grafana/grafana.ini <<EOF
+[security]
+allow_embedding = true
+[auth.anonymous]
+enabled = true
+org_name = Main Org.
+org_role = Viewer
+EOF
 sudo sed -i 's/enable_multi_variant_queries: true//' /etc/loki/config.yml
 sudo sed -i 's/log_level: debug/log_level: info/' /etc/loki/config.yml
+echo 'ARGS="--enable-feature=remote-write-receiver"' | sudo tee -a /etc/default/prometheus
+ 
+# Copy the dashboards 
+sudo mkdir -p /var/lib/grafana/dashboards/ray && sudo cp /tmp/ray/session_latest/metrics/grafana/dashboards/*.json /var/lib/grafana/dashboards/ray/
+sudo chown -R grafana:grafana /var/lib/grafana/dashboards
+
+# (Re)start services
+sudo systemctl daemon-reload
+sudo /bin/systemctl enable --now grafana-server
+sudo systemctl restart prometheus
 sudo systemctl restart loki
+sudo systemctl start alloy
+
+# Kill ray
+ray stop
+
+# Hold indefinitely
+while true; do
+    sleep 60
+done
 """
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
@@ -515,7 +563,7 @@ class RayDogCluster:
         ):
             self._add_tasks_to_task_group(
                 task_group_id=self._work_requirement.taskGroups[
-                    task_group_index + 1
+                    task_group_index + 2
                 ].id,
                 worker_node_worker_pool=worker_node_worker_pool,
             )
