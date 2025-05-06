@@ -29,6 +29,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
+/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
 export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
 export RAY_GRAFANA_IFRAME_HOST="http://localhost:3000"
 export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"

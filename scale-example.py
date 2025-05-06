@@ -34,7 +34,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-/opt/yellowdog/gent/.local/bin/uv pip install -U ray[default]
+/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
 export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"
 export RAY_GRAFANA_IFRAME_HOST="http://localhost:3000"
 export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
@@ -68,8 +68,8 @@ def main():
             head_node_ray_start_script=RAY_HEAD_NODE_START_SCRIPT,
             head_node_userdata=NODE_SETUP_SCRIPT,
             enable_observability=True,
-            observability_node_compute_requirement_template_id="yd-demo/yellowdog-ray-aws-split-spot-worker",
-            observability_node_images_id="yd/yd-demo/ray-yellowdog",
+            observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker",
+            observability_node_images_id="ami-01d201b7824bcda1c",
             observability_node_userdata=NODE_SETUP_SCRIPT,
             observability_node_metrics_enabled=True
         )
