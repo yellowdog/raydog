@@ -347,7 +347,7 @@ class RayDogCluster:
                 self._head_node_provisioned_worker_pool_properties,
             ).id
         )
-        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
+        for worker_node_worker_pool in self.worker_node_worker_pools.values():
             worker_node_worker_pool.worker_pool_id = (
                 self.yd_client.worker_pool_client.provision_worker_pool(
                     worker_node_worker_pool.compute_requirement_template_usage,
@@ -359,7 +359,7 @@ class RayDogCluster:
         # and submit it
         self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
-            for (_, worker_node_worker_pool) in self.worker_node_worker_pools.items()
+            for worker_node_worker_pool in self.worker_node_worker_pools.values()
         ]
         self._work_requirement = self.yd_client.work_client.add_work_requirement(
             self._work_requirement
@@ -397,8 +397,8 @@ class RayDogCluster:
         self.head_node_public_ip = node.details.publicIpAddress
 
         # Add worker node tasks to their task groups, one task per worker node
-        for task_group_index, (_, worker_node_worker_pool) in enumerate(
-            self.worker_node_worker_pools.items()
+        for task_group_index, worker_node_worker_pool in enumerate(
+            self.worker_node_worker_pools.values()
         ):
             self._add_tasks_to_task_group(
                 task_group_id=self._work_requirement.taskGroups[
