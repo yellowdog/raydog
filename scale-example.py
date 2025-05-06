@@ -100,6 +100,7 @@ def main():
             print("Shutting down Ray cluster")
             raydog_cluster.shut_down()
         if ssh_tunnels is not None:
+            print("Shutting down SSH tunnels")
             ssh_tunnels.stop_tunnels()
 
 
