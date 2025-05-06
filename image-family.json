@@ -1,0 +1,31 @@
+{
+  "resource": "MachineImageFamily",
+  "access": "PRIVATE",
+  "imageGroups": [
+    {
+      "images": [
+        {
+          "name": "eu-west-2",
+          "osType": "LINUX",
+          "provider": "AWS",
+          "providerImageId": "ami-003c3655bc8e97ae1",
+          "regions": ["eu-west-2"],
+          "supportedInstanceTypes": []
+        },
+        {
+          "name": "eu-west-1",
+          "osType": "LINUX",
+          "provider": "AWS",
+          "providerImageId": "ami-0f0c3baa60262d5b9",
+          "regions": ["eu-west-1"],
+          "supportedInstanceTypes": []
+        }
+      ],
+      "name": "ubuntu_22",
+      "osType": "LINUX"
+    }
+  ],
+  "name": "ray-yellowdog",
+  "namespace": "yd-demo",
+  "osType": "LINUX"
+}

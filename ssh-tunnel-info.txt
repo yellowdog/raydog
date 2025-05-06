@@ -1,5 +1,5 @@
 # Ray Client
-ssh -L 10001:locahost:10001 - private-key yd-agent@<head-node-public-ip>
+ssh -L 10001:localhost:10001 -i private-key yd-agent@<head-node-public-ip>
 
 # Ray Dashboard
-ssh -L 8265:locahost:8265 - private-key yd-agent@<head-node-public-ip>
+ssh -L 8265:localhost:8265 -i private-key yd-agent@<head-node-public-ip>

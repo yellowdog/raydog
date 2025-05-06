@@ -2,7 +2,6 @@
 
 import logging
 import random
-import time
 from datetime import datetime, timedelta
 from fractions import Fraction
 from os import getenv
@@ -32,6 +31,7 @@ def main():
             cluster_tag="my-ray-tag",
             head_node_userdata=NODE_SETUP_SCRIPT,
             cluster_lifetime=timedelta(seconds=600),
+            head_node_metrics_enabled=True,
         )
 
         # Add the worker pools
@@ -84,27 +84,37 @@ def pi4_sample(sample_count):
 
 
 def estimate_pi(cluster_address):
-    print("Connecting Ray to", cluster_address)
-
     # Initialize Ray
+    print("Connecting Ray to", cluster_address)
     ray.init(address=cluster_address, logging_level=logging.ERROR)
+
+    # How long do we want to spend working?
+    idealtime = timedelta(seconds=60)
+    mintime = 0.75 * idealtime
 
     # Get several estimates of pi
     batches = 100
-    print(f"Getting {batches} estimates of pi")
-    start = time.time()
+    while True:
+        print(f"Getting {batches} estimates of pi")
+        start = datetime.now()
 
-    results = []
-    for _ in range(batches):
-        results.append(pi4_sample.remote(1000 * 1000))
+        results = []
+        for _ in range(batches):
+            results.append(pi4_sample.remote(1000 * 1000))
 
-    output = ray.get(results)
-    mypi = sum(output) * 4 / len(output)
+        output = ray.get(results)
+        mypi = sum(output) * 4 / len(output)
 
-    dur = time.time() - start
-    print(f"Estimation took {dur} seconds")
+        dur = datetime.now() - start
 
-    print(f"The average estimate is {mypi} =", float(mypi))
+        print(f"Estimation took {dur} seconds")
+        print(f"The average estimate is {mypi} =", float(mypi))
+
+        if dur >= mintime:
+            break
+        else:
+            print("That was too quick. Increasing the number of estimates")
+            batches = int(batches * (idealtime / dur))
 
     # Shutdown Ray
     ray.shutdown()

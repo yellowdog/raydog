@@ -29,7 +29,7 @@ trap "ray stop; echo Ray stopped" EXIT
 set -euo pipefail
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start --head --port=6379 --block
+ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --block
 """
 
 WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
@@ -115,7 +115,7 @@ class RayDogCluster:
         self._cluster_tag = cluster_tag
         self._cluster_lifetime = cluster_lifetime
 
-        head_node_naming = f"{cluster_name}-00"
+        head_node_naming = f"{cluster_name}-00-head"
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
@@ -240,7 +240,7 @@ class RayDogCluster:
         self._task_group_running_total += 1
         worker_pool_index_str = str(self._task_group_running_total).zfill(2)
         task_group_name = f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}"
-        worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}"
+        worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}-wrkrs"
 
         worker_node_worker_pool = WorkerNodeWorkerPool(
             compute_requirement_template_usage=ComputeRequirementTemplateUsage(
@@ -328,8 +328,10 @@ class RayDogCluster:
     ) -> (str, str | None):
         """
         Build the cluster. This method will block until the Ray head node
-        is ready, but note that Ray worker nodes will still be configuring
-        and joining the cluster.
+        is ready.
+
+        Note that Ray worker nodes will still be in the process
+        of configuring and joining the cluster after this method returns.
 
         :param head_node_build_timeout: an optional timeout for building the head node;
             if the timeout expires before the head node task is executing, a TimeoutError
@@ -350,7 +352,7 @@ class RayDogCluster:
                 self._head_node_provisioned_worker_pool_properties,
             ).id
         )
-        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
+        for worker_node_worker_pool in self.worker_node_worker_pools.values():
             worker_node_worker_pool.worker_pool_id = (
                 self.yd_client.worker_pool_client.provision_worker_pool(
                     worker_node_worker_pool.compute_requirement_template_usage,
@@ -362,7 +364,7 @@ class RayDogCluster:
         # and submit it
         self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
-            for (_, worker_node_worker_pool) in self.worker_node_worker_pools.items()
+            for worker_node_worker_pool in self.worker_node_worker_pools.values()
         ]
         self._work_requirement = self.yd_client.work_client.add_work_requirement(
             self._work_requirement
@@ -400,8 +402,8 @@ class RayDogCluster:
         self.head_node_public_ip = node.details.publicIpAddress
 
         # Add worker node tasks to their task groups, one task per worker node
-        for task_group_index, (_, worker_node_worker_pool) in enumerate(
-            self.worker_node_worker_pools.items()
+        for task_group_index, worker_node_worker_pool in enumerate(
+            self.worker_node_worker_pools.values()
         ):
             self._add_tasks_to_task_group(
                 task_group_id=self._work_requirement.taskGroups[
@@ -445,12 +447,47 @@ class RayDogCluster:
         )
         self.worker_node_worker_pools.pop(name_to_remove)
 
+    def remove_worker_pool_by_internal_name(self, internal_name: str):
+        """
+        Remove a worker pool by its internal name. Raises exception if
+        worker pool not found.
+
+        :param internal_name: the internal name of the worker pool to remove.
+        """
+        if self._is_shut_down:
+            raise Exception(
+                "'remove_worker_pool_by_internal_name()' "
+                "method called on already shut-down cluster"
+            )
+
+        worker_node_worker_pool = self.worker_node_worker_pools.get(internal_name)
+        if worker_node_worker_pool is None:
+            raise Exception(
+                f"Worker pool with internal name '{internal_name}' not found"
+            )
+
+        if worker_node_worker_pool.worker_pool_id is not None:
+            self.remove_worker_pool(worker_node_worker_pool.worker_pool_id)
+        else:
+            self.worker_node_worker_pools.pop(internal_name)
+
     @property
     def worker_pool_ids(self) -> list[str]:
         """
         Generate the current list of worker pool IDs.
         """
-        return [x.worker_pool_id for _, x in self.worker_node_worker_pools.items()]
+        return [
+            x.worker_pool_id
+            for x in self.worker_node_worker_pools.values()
+            if x.worker_pool_id is not None
+        ]
+
+    @property
+    def worker_pool_internal_names(self) -> list[str]:
+        """
+        Generate the current list of worker pool internal names.
+        """
+        return list(self.worker_node_worker_pools.keys())
 
     def shut_down(self):
         """
@@ -477,10 +514,11 @@ class RayDogCluster:
             )
             self.head_node_worker_pool_id = None
 
-        for _, worker_node_worker_pool in self.worker_node_worker_pools.items():
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                worker_node_worker_pool.worker_pool_id
-            )
+        for worker_node_worker_pool in self.worker_node_worker_pools.values():
+            if worker_node_worker_pool.worker_pool_id is not None:
+                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                    worker_node_worker_pool.worker_pool_id
+                )
         self.worker_node_worker_pools = {}
 
         self._is_shut_down = True
