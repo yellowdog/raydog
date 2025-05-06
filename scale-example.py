@@ -21,7 +21,6 @@ from os import getenv
 
 import dotenv
 import ray
-from sshtunnel import SSHTunnelForwarder
 
 from raydog.raydog import RayDogCluster
 from utils.ray_ssh_tunnels import RayTunnels
