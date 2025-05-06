@@ -2,8 +2,6 @@
 
 import logging
 import random
-import time
-import sys
 from datetime import datetime, timedelta
 from fractions import Fraction
 from os import getenv
@@ -113,7 +111,7 @@ def estimate_pi(cluster_address):
 
         dur = datetime.now() - start
 
-        print(f"Estimation took {dur} seconds")        
+        print(f"Estimation took {dur} seconds")
         print(f"The average estimate is {mypi} =", float(mypi))
 
         if dur >= mintime:

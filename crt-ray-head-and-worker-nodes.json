@@ -15,14 +15,28 @@
   },
   {
     "resource": "ComputeRequirementTemplate",
-    "description": "CRT for Ray worker nodes (t2.micro)",
+    "description": "CRT for Ray head node (r5n.16xlarge)",
+    "instanceTags": {"user":  "ray-cluster-testing"},
+    "name": "yd-demo-aws-eu-west-2-split-ondemand-rayhead-big",
+    "namespace": "yd-demo",
+    "sources": [
+      {"instanceType": "r5n.16xlarge", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2a-ondemand"},
+      {"instanceType": "r5n.16xlarge", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2b-ondemand"},
+      {"instanceType": "r5n.16xlarge", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2c-ondemand"}
+    ],
+    "strategyType": "co.yellowdog.platform.model.SplitProvisionStrategy",
+    "type": "co.yellowdog.platform.model.ComputeRequirementStaticTemplate"
+  },
+  {
+    "resource": "ComputeRequirementTemplate",
+    "description": "CRT for Ray worker nodes (t2.small)",
     "instanceTags": {"user":  "ray-cluster-testing"},
     "name": "yd-demo-aws-eu-west-2-split-ondemand-rayworker",
     "namespace": "yd-demo",
     "sources": [
-      {"instanceType": "t2.micro", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2a-ondemand"},
-      {"instanceType": "t2.micro", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2b-ondemand"},
-      {"instanceType": "t2.micro", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2c-ondemand"}
+      {"instanceType": "t2.small", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2a-ondemand"},
+      {"instanceType": "t2.small", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2b-ondemand"},
+      {"instanceType": "t2.small", "sourceTemplateId": "yd-demo/yd-demo-aws-eu-west-2c-ondemand"}
     ],
     "strategyType": "co.yellowdog.platform.model.SplitProvisionStrategy",
     "type": "co.yellowdog.platform.model.ComputeRequirementStaticTemplate"
