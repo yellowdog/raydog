@@ -2,6 +2,7 @@
 Build a Ray cluster using YellowDog.
 """
 
+from os import path
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -24,88 +25,17 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-HEAD_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
-trap "ray stop; echo Ray stopped" EXIT
-set -euo pipefail
-VENV=/opt/yellowdog/agent/venv
-source $VENV/bin/activate
-/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default]
-export RAY_GRAFANA_HOST="http://$OBSERVABILITY_HOST:3000"
-export RAY_GRAFANA_IFRAME_HOST="http://localhost:3000"
-export RAY_PROMETHEUS_HOST="http://$OBSERVABILITY_HOST:9090"
-alloy run /etc/alloy/config.alloy &
-ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999 --block
-"""
-
-WORKER_NODE_RAY_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
-trap "ray stop; echo Ray stopped" EXIT
-set -euo pipefail
-VENV=/opt/yellowdog/agent/venv
-source $VENV/bin/activate
-alloy run /etc/alloy/config.alloy &
-ray start --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999 --block
-"""
-
-OBSERVABILITY_NODE_START_SCRIPT_DEFAULT = r"""#!/usr/bin/bash
-# Run ray head node so we can get the dashboards out
-VENV=/opt/yellowdog/agent/venv
-source $VENV/bin/activate
-ray start --head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --metrics-export-port=10002 --min-worker-port=10003 --max-worker-port=19999
-
-# Install and configure Grafana, Mimir, and Loki
-sudo apt -y install grafana prometheus loki
-sudo tee /etc/grafana/provisioning/datasources/prometheus.yaml <<EOF
-datasources:
-- name: Prometheus
-  type: prometheus
-  url: http://localhost:9090
-EOF
-sudo tee /etc/grafana/provisioning/datasources/loki.yaml <<EOF
-datasources:
-- name: loki
-  type: loki
-  url: http://localhost:3100
-EOF
-sudo tee /etc/grafana/provisioning/dashboards/ray.yaml <<EOF
-apiVersion: 1
-providers:
-- name: Ray
-  folder: Ray
-  type: file
-  options:
-    path: /var/lib/grafana/dashboards/ray
-EOF
-sudo tee -a /etc/grafana/grafana.ini <<EOF
-[security]
-allow_embedding = true
-[auth.anonymous]
-enabled = true
-org_name = Main Org.
-org_role = Viewer
-EOF
-sudo sed -i 's/enable_multi_variant_queries: true//' /etc/loki/config.yml
-sudo sed -i 's/log_level: debug/log_level: info/' /etc/loki/config.yml
-echo 'ARGS="--enable-feature=remote-write-receiver"' | sudo tee -a /etc/default/prometheus
- 
-# Copy the dashboards 
-sudo mkdir -p /var/lib/grafana/dashboards/ray && sudo cp /tmp/ray/session_latest/metrics/grafana/dashboards/*.json /var/lib/grafana/dashboards/ray/
-sudo chown -R grafana:grafana /var/lib/grafana/dashboards
-
-# (Re)start services
-sudo systemctl daemon-reload
-sudo /bin/systemctl enable --now grafana-server
-sudo systemctl restart prometheus
-sudo systemctl restart loki
-sudo systemctl start alloy
-
-# Kill ray
-ray stop
-
-# Hold indefinitely
-while true; do
-    sleep 60
-done
-"""
+CURRENT_DIR = path.dirname(path.abspath(__file__))
+SCRIPT_PATHS = {
+    "node-setup": "scripts/node-setup.sh",
+    "head-node": "scripts/head-node.sh",
+    "worker-node": "scripts/worker-node.sh",
+    "observability-node": "scripts/observability-node.sh"
+}
+DEFAULT_SCRIPTS = {}
+for name, script_path in SCRIPT_PATHS.items():
+    with open(path.join(CURRENT_DIR, script_path), 'r') as file:
+        DEFAULT_SCRIPTS[name] = file.read()
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
@@ -127,7 +57,6 @@ class WorkerNodeWorkerPool:
     task_prototype: Task
     worker_pool_id: str | None = None
 
-
 class RayDogCluster:
     """
     A class representing a Ray cluster managed by YellowDog.
@@ -143,18 +72,18 @@ class RayDogCluster:
         yd_platform_api_url: str = YD_DEFAULT_API_URL,
         cluster_tag: str | None = None,
         head_node_images_id: str | None = None,
-        head_node_userdata: str | None = None,
+        head_node_userdata: str = DEFAULT_SCRIPTS['node-setup'],
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
-        head_node_ray_start_script: str = HEAD_NODE_RAY_START_SCRIPT_DEFAULT,
+        head_node_ray_start_script: str = DEFAULT_SCRIPTS['head-node'],
         cluster_lifetime: timedelta | None = None,
         enable_observability: bool = False,
         observability_node_compute_requirement_template_id: str | None = None,
         observability_node_instance_tags: dict[str, str] | None = None,
         observability_node_images_id: str | None = None,
-        observability_node_userdata: str | None = None,
+        observability_node_userdata: str = DEFAULT_SCRIPTS['node-setup'],
         observability_node_metrics_enabled: bool = False,
-        observability_node_start_script: str = OBSERVABILITY_NODE_START_SCRIPT_DEFAULT,
+        observability_node_start_script: str = DEFAULT_SCRIPTS['observability-node'],
     ):
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
@@ -321,10 +250,10 @@ class RayDogCluster:
         worker_pool_node_count: int,
         worker_pool_internal_name: str | None = None,
         worker_node_images_id: str | None = None,
-        worker_node_userdata: str | None = None,
+        worker_node_userdata: str = DEFAULT_SCRIPTS['node-setup'],
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
-        worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
+        worker_node_task_script: str = DEFAULT_SCRIPTS['worker-node'],
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
