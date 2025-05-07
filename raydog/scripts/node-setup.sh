@@ -78,7 +78,7 @@ loki.source.file "ray" {
 }
 
 local.file_match "worker_output" {
-    path_targets = [{"__path__" = "/var/opt/yellowdog/agent/workers/*/taskoutput.txt", job="yellowdog_worker_task_output"}]
+    path_targets = [{"__path__" = "/var/opt/yellowdog/agent/data/workers/*/taskoutput.txt", job="yellowdog_task_output"}]
 }
 
 loki.source.file "worker_output" {
