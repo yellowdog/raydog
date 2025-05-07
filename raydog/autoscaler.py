@@ -8,11 +8,11 @@ import time
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from time import sleep
 
 from ray.autoscaler.node_provider import NodeProvider
 from ray.autoscaler.command_runner import CommandRunnerInterface
-
 from ray.autoscaler._private.cli_logger import cli_logger
 
 from yellowdog_client.common import (
@@ -21,12 +21,16 @@ from yellowdog_client.common import (
 
 from yellowdog_client.model import (
     ApiKey, 
+    AutoShutdown,
     ComputeRequirement,
     ComputeRequirementStatus,
     ComputeRequirementSummary,
     ComputeRequirementSummarySearch,
     ComputeRequirementTemplateUsage,
+    NodeWorkerTarget,
     Node,
+    ProvisionedWorkerPoolProperties,
+    RunSpecification,
     ServicesSchema,
     Task,
     TaskGroup,
@@ -42,7 +46,11 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-from raydog.raydog import RayDogCluster
+
+TASK_TYPE = "bash"
+
+HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
+IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 10.0
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -54,7 +62,7 @@ class NodeInfo:
     task: Task = None
     node: Node = None
     tags: Dict[str, str] = None
-    ip: [str, str] = None
+    ip: list[str] = None
     terminated: bool = False
 
 class RayDogNodeProvider(NodeProvider):
@@ -64,29 +72,19 @@ class RayDogNodeProvider(NodeProvider):
 
         logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
-        # force the cluster name to be lower case, to match naming requirements in YellowDog
+        # Force the cluster name to be lower case, to match the naming requirements for YellowDog
         cluster_name = cluster_name.lower()
 
-        # initialise the standard base class, in case there's anything useful in there        
+        # Initialise the standard base class, in case there's anything useful in there        
         super().__init__(provider_config, cluster_name)
 
-        # remember the YellowDog m=namespace
-        self.namespace = self.provider_config['namespace']
-
-        # Pick an ID for this run, to avoid name clashes
-        self.uniqueid = ''.join(random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8))
-
-        # If we're running client-side, the bootstrap function puts the auth info into the provider_config
+        # If we're running client-side, our bootstrap function puts the auth info into the provider_config
         self._auth_config = self.provider_config.get('auth')
  
-         # Make sure various other variables exist. Values come later
-        self._transfer_pending = None
-        self._cmd_runner = None
+        # Initialise various instance variables
         self._tag_store = TagStore()
+        self._cmd_runner = None
         self._scripts = {}
-
-        # Initialise the connection to YellowDog
-        self._connect_to_yellowdog()
 
         # Work out whether this is the head node (ie. autoscaling config provided & running as the YD agent) 
         configfile = self._get_autoscaling_config_option()
@@ -97,30 +95,32 @@ class RayDogNodeProvider(NodeProvider):
             self._basepath = '.'
             self._on_head_node = False
 
-        # Try to find an existing setup in YellowDog
-        workreq = self._find_work_requirement()
-
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
             # Running on the head node
-            self._raydog = RayDogClusterConnection(self.yd_client, workreq, self._tag_store)
+            self._raydog = RayDogHead(provider_config, cluster_name, self._tag_store)
+
+            # Make sure that YellowDog knows about this cluster
+            if not self._raydog.find_raydog_cluster():
+                raise Exception(f"Failed to find  info in YellowDog for {cluster_name}")
+            
             self._headid = self._raydog.head_node_task_id
 
             # Wait for the client to upload initial tag data
             self._load_tags_sent_from_client()
         else:
             # Running on a client node
-            if workreq:
+            self._raydog = RayDogClient(provider_config, cluster_name, self._tag_store)
+
+            if self._raydog.find_raydog_cluster():
                 # Connect to an existing head node
-                self._raydog = RayDogClusterConnection(self.yd_client, workreq, self._tag_store)
                 self._headid = self._raydog.head_node_task_id
 
-                # Will get the tags from the head node later
+                # Get the tags from the head node 
                 self._pull_tags_from_head_node()
             else:
                 # Ray will create a new head node ... later
-                self._raydog = None
-                #self._init_node_info()
+                pass
     
     def _is_running_as_yd_agent(self) -> bool:
         """Detect when autoscaler is running under the YellowDog agent"""
@@ -132,71 +132,6 @@ class RayDogNodeProvider(NodeProvider):
             if arg.startswith("--autoscaling-config="):
                 return arg.split('=')[1]
         return None
-    
-    def _connect_to_yellowdog(self) -> None:
-        """Connect to the YellowDog API, using creds from environment variables and/or a .env file"""
-
-        # Read extra environment vars from a file ... a minimalist dotenv
-        env_file = ".env"
-        if os.path.exists(env_file):
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if (not line) or line.startswith('#'):
-                        continue
-                    name, equals, value = line.partition('=')
-                    if equals == '=':
-                        value = value.removeprefix('"').removesuffix('"') 
-                        os.environ[name] = value
-
-        # Get API login info from environment variables 
-        self._api_url = os.getenv("YD_API_URL", "https://api.yellowdog.ai")
-        self._api_key_id = os.getenv("YD_API_KEY_ID")
-        self._api_key_secret = os.getenv("YD_API_KEY_SECRET")
-
-        # Make the connection
-        self.yd_client = PlatformClient.create(
-            ServicesSchema(defaultUrl=self._api_url),
-            ApiKey(
-                self._api_key_id,
-                self._api_key_secret,
-            ),
-        )
-
-    def _find_work_requirement(self) -> str:
-        """Try to find an existing cluster in YellowDog""" 
-
-        # is there a live work requirement with the right name?
-        candidates = self.yd_client.work_client.get_work_requirements(
-            WorkRequirementSearch(
-                statuses=[WorkRequirementStatus.RUNNING],
-                namespace=self.namespace 
-            )
-        )
- 
-        for x in candidates.iterate():
-            if x.name.startswith(self.cluster_name):
-                return x.id
-                 
-        return None
-    
-    def _find_head_node(self):
-        """Try to find an existing head node for the cluster through YellowDog""" 
-
-        # is there a live compute requirement with the right name?
-        candidates = self.yd_client.work_client.get_work_requirements(
-            WorkRequirementSearch(
-                statuses=[WorkRequirementStatus.RUNNING],
-                namespace=self.namespace 
-            )
-        )
- 
-        for x in candidates.iterate():
-            if x.name.startswith(self.cluster_name):
-                return x.id
-                 
-        return None
-
 
     def __del__(self):
         """Shutdown the cluster"""
@@ -257,98 +192,52 @@ class RayDogNodeProvider(NodeProvider):
         else:
             raise Exception(f"Unknown node id {node_id}")
 
-    def _get_ip_addresses(self, node_id: str) -> (str, str):
-        info = self._tag_store.get_node_info(node_id)
-        if info.ip:
-            return info.ip
-        
-        info.task = self._read_task_info(node_id)
-        if info.task.status != TaskStatus.EXECUTING:
-            return ( None, None ) 
-
-        ydnodeid = info.task.workerId.replace("wrkr", "node")[:-2]
-        ydnode = self.yd_client.worker_pool_client.get_node_by_id(ydnodeid)
-
-        info.ip = ( ydnode.details.publicIpAddress, ydnode.details.privateIpAddress )
-        return info.ip
         
     def external_ip(self, node_id: str) -> str:
         """Returns the external ip of the given node."""
         logger.debug(f"external_ip {node_id}")
-        return self._get_ip_addresses(node_id)[0]
+        return self._raydog.get_ip_addresses(node_id)[0]
     
     def internal_ip(self, node_id: str) -> str:
         """Returns the internal ip (Ray ip) of the given node."""
         logger.debug(f"internal_ip {node_id}")
-        return self._get_ip_addresses(node_id)[1]
+        return self._raydog.get_ip_addresses(node_id)[1]
 
     def create_node(
         self, node_config: Dict[str, Any], tags: Dict[str, str], count: int
     ) -> Optional[Dict[str, Any]]:
-        """Creates a number of nodes within the namespace.
-        """
+        """Creates a number of nodes within the namespace."""
         logger.debug(f"create_node {node_config} {tags} {count}")
 
+        # Start creating instances 
+        flavour = tags['ray-user-node-type']
+        self._raydog.provision_instances(
+            flavour=flavour,
+            node_config=node_config, 
+            count=count, 
+            userdata=self._get_script('initialization_script'), 
+            metrics_enabled= True) 
+
+        # Start the required tasks
         node_type = tags['ray-node-type']
-        node_name = tags['ray-node-name']
-
         if node_type == 'head':
-            namespace = self.provider_config['namespace']
-
-            self._raydog = RayDogCluster(
-                yd_application_key_id=self._api_key_id,
-                yd_application_key_secret=self._api_key_secret,
-                yd_platform_api_url=self._api_url,
-
-                cluster_name=self.cluster_name + '-' + self.uniqueid,
-                cluster_namespace=namespace,
-                cluster_tag=self.cluster_name,
-                cluster_lifetime=self._get_cluster_lifetime(),
-
-                head_node_compute_requirement_template_id=node_config['compute_requirement_template'],
-                head_node_images_id=node_config['images_id'],
-                head_node_userdata=self._get_script('initialization_script'),
-                head_node_ray_start_script=self._get_script('head_start_ray_script')
+            # Create a head node
+            self._headid = self._raydog.create_head_node(
+                flavour=flavour,
+                tags=tags,
+                ray_start_script=self._get_script('head_start_ray_script')
             )
-
-            self._raydog.build()
-
-            # create the initial set of tags 
-            self._headid = self._raydog.head_node_task_id
-            info = self._tag_store.new_node_info(self._headid, tags, self._read_task_info(self._headid))
-            info.ip = ( self._raydog.head_node_public_ip, self._raydog.head_node_private_ip )
 
             # need to send tags to the head node
             self._push_tags_to_head_node()
         else:
-            # is there a worker pool for this worker type?
-            pool = self._raydog.worker_node_worker_pools.get(node_name)
-            if not pool:
-                self._raydog.add_worker_pool(
-                    worker_pool_internal_name=node_name,
-                    worker_pool_node_count=count,
-
-                    worker_node_compute_requirement_template_id=node_config['compute_requirement_template'],
-                    worker_node_images_id=node_config['images_id'],
-                    worker_node_userdata=self._get_script('initialization_script'),
-                    worker_node_task_script=self._get_script('worker_start_ray_script')
-                )
-                pool = self._raydog.worker_node_worker_pools.get(node_name)
-
-            # tell Yellowdog to create workers 
-            task = pool.task_prototype
-            task.environment.update(
-                { "RAY_HEAD_IP" : self._raydog.head_node_private_ip }
+            # Create worker nodes
+            self._raydog.create_worker_nodes(
+                flavour=flavour,
+                tags=tags,
+                ray_start_script=self._get_script('worker_start_ray_script'),
+                count=count
             )
-
-            newtasks = self._raydog.yd_client.work_client.add_tasks_to_task_group_by_id(
-                pool.task_group_id, [ task for _ in range(count) ])
-
-            # add to the list of workers
-            for newtask in newtasks:
-                self._tag_store.new_node_info(newtask.id, tags, newtask)
-
-            logger.debug("Trying to build a worker node")
 
     def terminate_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Terminates the specified node."""
@@ -453,32 +342,6 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store.write_tags_to_file(filename)
 
 
-    # 
-    def _read_task_info(self, node_id):    
-        return self.yd_client.work_client.get_task_by_id(node_id)
-
-    def _get_cluster_lifetime(self):
-        """Get the cluster lifetime from the config. If the lifetime ends with 'd' its in days, 
-           'h' is hours, 'm' is minutes, 's' (or nothing) is seconds
-        """
-        lifetime = self.provider_config.get('lifetime')
-        if not lifetime:
-            return None
- 
-        lastchar = lifetime[-1].lower()
-        if lastchar in "dhms":
-            duration = float(lifetime[0:-1])
-            if lastchar == 'd':
-                return timedelta(days=duration)
-            elif lastchar == 'h':
-                return timedelta(hours=duration)
-            elif lastchar == 'm':
-                return timedelta(minutes=duration)
-            elif lastchar == 's':
-                return timedelta(seconds=duration)
-        else:
-            return timedelta(seconds=float(lifetime))
-
     @staticmethod
     def _read_file(filename):
         """Read the contents of a file"""
@@ -559,12 +422,313 @@ class TagStore():
             else:
                 self.new_node_info(node_id, tags)
 
+class RayDogClient(RayDogBase):
+    def __init__(self, provider_config: Dict[str, Any], cluster_name: str, tag_store:TagStore):
+        super().__init__(provider_config, cluster_name, tag_store)
+
+    def create_head_node(self, 
+        flavour: str,
+        tags: Dict[str, str],
+        ray_start_script: str) :
+
+        start_time = datetime.now()
+
+        # Create the work requirement in YellowDog, if it isn't already there 
+        if not self._work_requirement:
+            work_requirement = WorkRequirement(
+                namespace=self.namespace,
+                name=self._cluster_name,
+                tag=self._cluster_tag,
+                taskGroups=[
+                    TaskGroup(
+                        name="head-node",
+                        tag=flavour,
+                        finishIfAnyTaskFailed=True,
+                        runSpecification=RunSpecification(
+                            taskTypes=[TASK_TYPE],
+                            workerTags=[flavour],
+                            namespaces=[self.namespace],
+                            exclusiveWorkers=True,
+                            taskTimeout=self._cluster_lifetime,
+                        ),
+                    )
+                ],
+            )
+            self.work_requirement_id = work_requirement.id
+
+        # Create a task to run the head node
+        head_node_task = Task(
+            taskType=TASK_TYPE,
+            taskData=ray_start_script,
+            arguments=["taskdata.txt"],
+            environment={
+                "YD_API_KEY_ID" : self._api_key_id,
+                "YD_API_KEY_SECRET" : self._api_key_secret,
+                "YD_API_URL" : self._api_url
+            }
+        )
+
+        self.head_node_task_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
+            self._work_requirement.taskGroups[0].id,
+            [head_node_task])[0].id
+
+        # Wait for the head node to start
+        if self._build_timeout:
+            endtime = start_time + self._build_timeout
+            timed_out = lambda: (datetime.now() >= endtime)
+        else:
+            timed_out = lambda: False
+             
+        while True:  
+            head_task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
+            if head_task.status == TaskStatus.EXECUTING:
+                break
+
+            if timed_out():
+                self.shut_down()
+                raise TimeoutError("Timeout waiting for Ray head node task to enter EXECUTING state")
+            
+            sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
+
+        # Remember the Ray tags 
+        node_info = self.tag_store.new_node_info(
+            node_id=head_task.id,
+            ray_tags=tags,
+            task=head_task)
+
+        # Extract the head node's IP addresses
+        self.head_node_node_id = self._get_node_id_for_task(head_task)
+        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(self.head_node_node_id)
+
+        node_info.ip = [self.head_node_private_ip, self.head_node_public_ip] 
+
+    def create_worker_nodes(self, 
+        flavour: str,
+        tags: Dict[str, str],
+        ray_start_script: str,
+        count: int) :
+        raise Exception(f"create_worker_nodes called on the client node")
 
 
-class RayDogClusterConnection(RayDogCluster):
-    """Connect to a RayDogCluster that is already running"""
+class RayDogHead(RayDogBase):
+    def __init__(self, provider_config: Dict[str, Any], cluster_name: str, tag_store:TagStore):
+        super().__init__(provider_config, cluster_name, tag_store)
 
-    def _get_tasks_in_task_group(self, task_group_id:str) -> SearchClient[Task]:
+    def create_worker_nodes(self, 
+        flavour: str,
+        tags: Dict[str, str],
+        ray_start_script: str,
+        count: int) :
+            
+        # Get th e latest state of the 
+        work_requirement: WorkRequirement = self.yd_client.work_client.get_work_requirement_by_id(self._work_requirement_id)
+
+        # Look for a task group for this node flavour
+        task_group: TaskGroup = None
+        for tg in work_requirement.taskGroups:
+            if tg.tag == flavour:
+                task_group = tg
+                break
+
+        # If there isn't one, create it
+        if not task_group:
+            index = len(work_requirement.taskGroups)
+
+            work_requirement.taskGroups.append(TaskGroup(
+                name=f"worker-nodes-{flavour}",
+                tag=flavour,
+                finishIfAnyTaskFailed=False,
+                runSpecification=RunSpecification(
+                    taskTypes=[TASK_TYPE],
+                    workerTags=[flavour],
+                    namespaces=[self.namespace],
+                    exclusiveWorkers=True,
+                    taskTimeout=self._cluster_lifetime,
+                )
+            ))
+            work_requirement.taskGroups.append(task_group)
+
+            work_requirement = self.yd_client.work_client.update_work_requirement(work_requirement)
+            task_group = work_requirement.taskGroups[index]
+
+        # Add tasks to create worker nodes
+        worker_node_task = Task(
+            taskType=TASK_TYPE,
+            taskData=ray_start_script,
+            arguments=["taskdata.txt"],
+            environment={
+                "RAY_HEAD_IP" : self.head_node_private_ip
+            },
+        )
+
+        newtasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
+            task_group.id,
+            [ worker_node_task for _ in range(count) ],
+        )
+
+        # Store the Ray tags and task info
+        for newtask in newtasks:
+            self.tag_store.new_node_info(newtask.id, tags, newtask)
+
+    def create_head_node(self, 
+        flavour: str,
+        tags: Dict[str, str],
+        ray_start_script: str) :
+        raise Exception(f"create_head_node called on the head node")
+
+
+class RayDogBase():
+    def __init__(self, provider_config: Dict[str, Any], cluster_name: str, tag_store:TagStore):
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG)
+
+        self.namespace = provider_config['namespace']
+        self.cluster_name = cluster_name
+        self.cluster_tag = "cluster_tag"
+        
+        self.provider_config = provider_config
+        self.tag_store = tag_store
+
+        self._worker_pools = {}
+        self._work_requirement = None
+
+        # Determine how long to wait for things
+        self._cluster_lifetime = self._parse_timespan(provider_config.get['lifetime'])
+        self._build_timeout = self._parse_timespan(provider_config.get['build_timeout'])
+
+        # Connect to YellowDog
+        self._connect_to_yellowdog_api() 
+
+    def provision_instances(self,
+        flavour: str,
+        node_config: Dict[str, Any], 
+        count: int, 
+        userdata:str, 
+        metrics_enabled:bool = True) -> None:
+        """Make sure there is a worker pool for this type of node"""
+
+        compute_requirement_template_id = node_config['compute_requirement_template']
+        images_id = node_config['images_id']
+
+        #TODO: handle the on-prem case
+        if flavour in self._worker_pools:
+            pass
+            #TODO: make the worker pool larger
+        else:
+            compute_requirement_template_usage = ComputeRequirementTemplateUsage(
+                templateId=compute_requirement_template_id,
+                requirementName=flavour,
+                requirementNamespace=self.namespace,
+                requirementTag=self.cluster_tag,
+                targetInstanceCount=count,
+                imagesId=images_id,
+                userData=userdata,
+                instanceTags=flavour)
+
+            auto_shut_down = AutoShutdown(
+                enabled=True,
+                timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES))
+            
+            provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
+                createNodeWorkers=NodeWorkerTarget.per_node(1),
+                minNodes=1,
+                maxNodes=100, #TODO: make this configurable/bigger
+                workerTag=flavour,
+                metricsEnabled=metrics_enabled,
+                idleNodeShutdown=auto_shut_down,
+                idlePoolShutdown=auto_shut_down)
+            
+            worker_pool: WorkerPool = self.yd_client.worker_pool_client.provision_worker_pool(                
+                compute_requirement_template_usage,                
+                provisioned_worker_pool_properties)
+   
+            self._worker_pools[flavour] = worker_pool.id
+
+    def _connect_to_yellowdog_api(self) -> None:
+        """Connect to the YellowDog API, using creds from environment variables and/or a .env file"""
+
+        # Read extra environment vars from a file ... a minimalist dotenv
+        env_file = ".env"
+        if os.path.exists(env_file):
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if (not line) or line.startswith('#'):
+                        continue
+                    name, equals, value = line.partition('=')
+                    if equals == '=':
+                        value = value.removeprefix('"').removesuffix('"') 
+                        os.environ[name] = value
+
+        # Get API login info from environment variables 
+        self._api_url = os.getenv("YD_API_URL", "https://api.yellowdog.ai")
+        self._api_key_id = os.getenv("YD_API_KEY_ID")
+        self._api_key_secret = os.getenv("YD_API_KEY_SECRET")
+
+        # Make the connection
+        self.yd_client = PlatformClient.create(
+            ServicesSchema(defaultUrl=self._api_url),
+            ApiKey(
+                self._api_key_id,
+                self._api_key_secret,
+            ),
+        )
+
+    def find_raydog_cluster(self) -> bool:
+        """Try to find an existing RayDog cluster in YellowDog""" 
+
+        # Is there a live work requirement with the right name?
+        candidates = self.yd_client.work_client.get_work_requirements(
+            WorkRequirementSearch(
+                statuses=[WorkRequirementStatus.RUNNING],
+                namespace=self.namespace 
+            )
+        )
+ 
+        work_req_id: str = None
+        work_req: WorkRequirement
+        for work_req in candidates.iterate():
+            if work_req.name.startswith(self.cluster_name):
+                work_req_id = work_req.id
+                break
+
+        # Not found         
+        if work_req_id is None:
+            return False
+
+        # Found - fill in the details
+        self.work_requirement_id = work_req_id
+        work_requirement = self.get_work_requirement()
+
+        self._is_shut_down: bool = (work_requirement.status != WorkRequirementStatus.RUNNING)
+
+        self._cluster_name: str = work_requirement.name
+        self._cluster_tag: str = work_requirement.tag
+
+        # Task group for the head node
+        head_task_group: TaskGroup = work_requirement.taskGroups[0]
+        self._cluster_lifetime = head_task_group.runSpecification.taskTimeout 
+
+        head_task: Task = self.get_tasks_in_task_group(head_task_group.id).list_all()[0]
+        self.head_node_task_id = head_task.id
+
+        # Remember info about the head node
+        self.tag_store.new_node_info(head_task.id, {}, head_task)
+
+        # Get the node details for the head node
+        self.head_node_node_id = self._get_node_id_for_task(head_task)
+        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(self.head_node_node_id)
+
+        return True
+        
+    def read_task_info(self, node_id):    
+        return self.yd_client.work_client.get_task_by_id(node_id)
+
+    def get_work_requirement(self) -> WorkRequirement:
+        """Get the latest state of the YellowDog work requirement for this cluster"""
+        return self.yd_client.work_client.get_work_requirement_by_id(self.work_requirement_id)
+
+    def get_tasks_in_task_group(self, task_group_id:str) -> SearchClient[Task]:
         """Helper method to do a search to find all the Tasks in a TaskGroup"""
         return self.yd_client.work_client.get_tasks(TaskSearch(
             workRequirementId=self.work_requirement_id,
@@ -572,10 +736,20 @@ class RayDogClusterConnection(RayDogCluster):
             statuses=[TaskStatus.EXECUTING])
         )
 
-    def _get_ip_addresses(self, yd_node_id: str) -> ( str, str ):
-        """Get the public and private IP addresses for a given node"""
-        node: Node = self.yd_client.worker_pool_client.get_node_by_id(yd_node_id)
-        return ( node.details.privateIpAddress, node.details.publicIpAddress )
+    def get_ip_addresses(self, node_id: str) -> (str, str):
+        info = self.tag_store.get_node_info(node_id)
+        if info.ip:
+            return info.ip
+        
+        info.task = self.read_task_info(node_id)
+        if info.task.status != TaskStatus.EXECUTING:
+            return ( None, None ) 
+
+        ydnodeid = self._get_node_id_for_task(info.task)
+        ydnode = self.yd_client.worker_pool_client.get_node_by_id(ydnodeid)
+
+        info.ip = ( ydnode.details.publicIpAddress, ydnode.details.privateIpAddress )
+        return info.ip
 
     @staticmethod
     def _get_node_id_for_task(task: Task) -> str:
@@ -584,89 +758,25 @@ class RayDogClusterConnection(RayDogCluster):
         """
         return task.workerId.replace("wrkr", "node")[:-2]    
 
-    def __init__(self, yd_client:PlatformClient, work_req:str, tag_store:TagStore):
-        logger = logging.getLogger(__name__)
-        logger.setLevel(logging.DEBUG)
-
-        self.yd_client: PlatformClient = yd_client
-
-        # Get the work requirement from YellowDog
-        self.work_requirement_id: str = work_req
-
-        self._work_requirement: WorkRequirement = self.yd_client.work_client.get_work_requirement_by_id(self.work_requirement_id)
-
-        self._is_shut_down: bool = (self._work_requirement.status != WorkRequirementStatus.RUNNING)
-
-        self._cluster_namespace: str = self._work_requirement.namespace
-        self._cluster_name: str = self._work_requirement.name
-        self._cluster_tag: str = self._work_requirement.tag
-
-        # Task group for the head node
-        head_task_group: TaskGroup = self._work_requirement.taskGroups[0]
-        self._cluster_lifetime = head_task_group.runSpecification.taskTimeout 
-
-        head_task: Task = self._get_tasks_in_task_group(head_task_group.id).list_all()[0]
-        self.head_node_task_id = head_task.id
-
-        # remember info about the head node
-        tag_store.new_node_info(head_task.id, {}, head_task)
-
-        # Get the node details for the head node
-        self.head_node_node_id = self._get_node_id_for_task(head_task)
-        self.head_node_private_ip, self.head_node_public_ip = self._get_ip_addresses(self.head_node_node_id)
-
-        logger.info(f"worker task groups")
-
-        # Look through the Task groups for worker nodes
-        for worker_task_group in self._work_requirement.taskGroups[1:]:
-            worker_task: Task
-            for worker_task in self._get_tasks_in_task_group(worker_task_group.id).iterate():
-                logger.info(f"Worker Task: {worker_task}")
-                tag_store.new_node_info(worker_task.id, {}, worker_task)
-
-        # Compute requirement template
-        cr_summaries = self.yd_client.compute_client.get_compute_requirement_summaries(
-            ComputeRequirementSummarySearch(
-                namespace=self._cluster_namespace,
-                tag=self._cluster_tag,         
-                statuses=[ComputeRequirementStatus.NEW,
-                          ComputeRequirementStatus.PROVISIONING,
-                          ComputeRequirementStatus.RUNNING]
-            )
-        )
-        
-        logger.info(f"get_compute_requirement_summaries")
-
-        head_node_naming = f"{self._cluster_name}-00"
-
-        cr_summary: ComputeRequirementSummary
-        for cr_summary in cr_summaries.iterate():
-            if not cr_summary.name.startswith(self._cluster_name):
-                continue
-
-            cr: ComputeRequirement = self.yd_client.compute_client.get_compute_requirement_by_id(cr_summary.id)
-            #logger.info(f"Compute Req: {cr}")
-            logger.info(f"Compute Req Summary: {cr_summary}")
-
-        # Provisioned worker pools
-        worker_pools = self.yd_client.worker_pool_client.get_worker_pools(
-            WorkerPoolSearch(
-                namespace=self._cluster_namespace,
-                statuses=[WorkerPoolStatus.CONFIGURING,
-                          WorkerPoolStatus.EMPTY,
-                          WorkerPoolStatus.IDLE, 
-                          WorkerPoolStatus.PENDING, 
-                          WorkerPoolStatus.RUNNING]
-            )
-        )
-       
-        logger.info(f"get_worker_pools")
-
-        pool_summary: WorkerPoolSummary
-        for pool_summary in worker_pools.iterate():
-            if not pool_summary.name.startswith(self._cluster_name):
-                continue
-
-            pool: WorkerPool = self.yd_client.worker_pool_client.get_worker_pool_by_id(pool_summary.id)
-            logger.info(f"Worker Pool: {pool}")
+    @staticmethod
+    def _parse_timespan(self, timespan: str) -> timedelta:
+        """Parse a string representing a time span. If it ends with 'd' its in days, 
+           'h' is hours, 'm' is minutes, 's' (or nothing) is seconds
+        """
+        if not timespan:
+            return None
+ 
+        lastchar = timespan[-1].lower()
+        if lastchar in "dhms":
+            duration = float(timespan[0:-1])
+            if lastchar == 'd':
+                return timedelta(days=duration)
+            elif lastchar == 'h':
+                return timedelta(hours=duration)
+            elif lastchar == 'm':
+                return timedelta(minutes=duration)
+            elif lastchar == 's':
+                return timedelta(seconds=duration)
+        else:
+            return timedelta(seconds=float(timespan))
 
