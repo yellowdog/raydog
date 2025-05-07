@@ -2,7 +2,7 @@
     
 trap "ray stop; echo Ray stopped" EXIT
 
-set -euo pipefail
+set -eo pipefail
 
 RAY_ARGS="--head --port=6379 --num-cpus=0 --memory=0 --dashboard-host=0.0.0.0 --block"
 

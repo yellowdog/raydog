@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-set -euo pipefail
+set -eo pipefail
 
 echo "Installing the YellowDog agent"
 cd /root || exit

@@ -14,7 +14,7 @@ TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
-ENABLE_OBSERVABILITY = True
+ENABLE_OBSERVABILITY = False
 
 import logging
 import time
@@ -23,14 +23,7 @@ from os import getenv
 
 import dotenv
 import ray
-from yellowdog_client.model.range import T
-from yellowdog_client.model.worker import Worker
-
 from raydog.raydog import RayDogCluster
-
-# This is needed temporarily because the preconfigured AMI doesn't
-# have the Ray dashboard installed
-
 from utils.ray_ssh_tunnels import RayTunnels, basic_port_forward
 
 def main():
@@ -147,6 +140,7 @@ def ray_test_job(cluster_address):
     print(f"Total duration: {time.time() - start_time} seconds")
 
     ray.shutdown()  # Shut down Ray
+
 
 # Entry point
 if __name__ == "__main__":

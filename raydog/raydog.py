@@ -209,6 +209,11 @@ class RayDogCluster:
                         taskTimeout=cluster_lifetime,
                     ),
                 ),
+            ],
+        )
+        
+        if enable_observability:
+            self._work_requirement.taskGroups.append(
                 TaskGroup(
                     name=OBSERVABILITY_NODE_TASK_GROUP_NAME,
                     finishIfAnyTaskFailed=False,
@@ -220,8 +225,7 @@ class RayDogCluster:
                         taskTimeout=cluster_lifetime,
                     ),
                 )
-            ],
-        )
+            )
 
         self._task_group_running_total = 0  # Note: never decremented
 
@@ -396,8 +400,6 @@ class RayDogCluster:
         start_time = datetime.now(timezone.utc)
 
             
-
-            
         # Provision all currently defined worker pools
         self.head_node_worker_pool_id = (
             self.yd_client.worker_pool_client.provision_worker_pool(
@@ -424,6 +426,7 @@ class RayDogCluster:
         )
         self.work_requirement_id = self._work_requirement.id
         
+        # Set up observability worker pool and task, etc..
         if self.enable_observability:
             self._observability_node_worker_pool_id = (
                 self.yd_client.worker_pool_client.provision_worker_pool(
@@ -449,11 +452,9 @@ class RayDogCluster:
                     raise TimeoutError(
                         "Timeout waiting for observability node task to enter EXECUTING state"
                     )
-                    
             self.observability_node_id = observability_task.workerId.replace("wrkr", "node")[:-2]
             observability_node: Node = self.yd_client.worker_pool_client.get_node_by_id(self.observability_node_id)
             self.observability_node_private_ip = observability_node.details.privateIpAddress
-            
             self._head_node_task.environment.update({"OBSERVABILITY_HOST": self.observability_node_private_ip})
 
         # Add the head node task to the first task group
@@ -463,11 +464,10 @@ class RayDogCluster:
                 [self._head_node_task],
             )[0].id
         )
-        
 
         while True:  # Check for execution of the head node task
             task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
-            if task.status == TaskStatus.EXECUTING and observability_task.status == TaskStatus.EXECUTING:
+            if task.status == TaskStatus.EXECUTING:
                 break
             if (
                 head_node_build_timeout is not None
@@ -479,23 +479,22 @@ class RayDogCluster:
                 )
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
             
+        # Set the head node ID and get the node details
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
         node: Node = self.yd_client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
         self.head_node_private_ip = node.details.privateIpAddress
         self.head_node_public_ip = node.details.publicIpAddress
-        
-
-        # Set the head node ID and get the node details
 
         # Add worker node tasks to their task groups, one task per worker node
+        index = 2 if self.enable_observability else 1
         for task_group_index, worker_node_worker_pool in enumerate(
             self.worker_node_worker_pools.values()
         ):
             self._add_tasks_to_task_group(
                 task_group_id=self._work_requirement.taskGroups[
-                    task_group_index + 2
+                    task_group_index + index
                 ].id,
                 worker_node_worker_pool=worker_node_worker_pool,
             )
@@ -627,12 +626,10 @@ class RayDogCluster:
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
         """
 
-        worker_node_worker_pool.task_prototype.environment.update(
-            {
-                "RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip,
-                "OBSERVABILITY_HOST": self.observability_node_private_ip,
-            }
-        )
+        worker_node_worker_pool.task_prototype.environment.update({"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip})
+        if self.enable_observability:
+            worker_node_worker_pool.task_prototype.environment.update({"OBSERVABILITY_HOST": self.observability_node_private_ip})
+            
         self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group_id,
             [

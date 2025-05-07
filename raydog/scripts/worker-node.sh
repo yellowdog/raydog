@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 trap "ray stop; echo Ray stopped" EXIT
 
-set -euo pipefail
+set -eo pipefail
 
 RAY_ARGS="--address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block"
 
