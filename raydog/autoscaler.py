@@ -561,9 +561,14 @@ class RayDogBase():
         # Remember info about the head node
         self._tag_store.new_node_info(head_task.id, {}, head_task)
 
+        # Create some dummy Ray tags 
+        self._tag_store.new_node_info(
+            node_id=head_task.id,
+            ray_tags={},
+            task=head_task)
+
         # Get the node details for the head node
-        self.head_node_node_id = self._get_node_id_for_task(head_task)
-        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(self.head_node_node_id)
+        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(head_task.id)
 
         return True
         
@@ -704,7 +709,7 @@ class RayDogClient(RayDogBase):
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
 
         # Remember the Ray tags 
-        node_info = self._tag_store.new_node_info(
+        self._tag_store.new_node_info(
             node_id=head_task.id,
             ray_tags=tags,
             task=head_task)
