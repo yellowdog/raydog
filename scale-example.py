@@ -62,14 +62,16 @@ def main():
             )
 
         # Build the Ray cluster
-        print("Building Ray cluster")
+        print("Building Ray cluster...")
         private_ip, public_ip = raydog_cluster.build(
             head_node_build_timeout=timedelta(seconds=600)
         )
+        print(f"Ray head node started at public IP address: '{public_ip}'")
 
         # Allow time for the API and Dashboard to start before creating
         # the SSH tunnels
-        time.sleep(10)
+        print("Waiting for Ray services to start...")
+        time.sleep(20)
         ssh_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
