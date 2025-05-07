@@ -18,7 +18,7 @@ class RayTunnels:
         ray_head_ip_address: str,
         ssh_user: str,
         private_key_file: str,
-        ray_ports: tuple[int] = (10001, 8265),
+        ray_ports: tuple[int, ...] = (10001, 8265),
     ):
         """
         Set SSH tunnel parameters.
