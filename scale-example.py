@@ -14,6 +14,8 @@ TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
+ENABLE_OBSERVABILITY = True
+
 import logging
 import time
 from datetime import datetime, timedelta
@@ -29,7 +31,7 @@ from raydog.raydog import RayDogCluster
 # This is needed temporarily because the preconfigured AMI doesn't
 # have the Ray dashboard installed
 
-from utils.ray_ssh_tunnels import RayTunnels
+from utils.ray_ssh_tunnels import RayTunnels, basic_port_forward
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
@@ -53,7 +55,7 @@ def main():
             ),
             head_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
             head_node_metrics_enabled=True,
-            enable_observability=True,
+            enable_observability=ENABLE_OBSERVABILITY,
             observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker",
             observability_node_images_id="ami-01d201b7824bcda1c",
             observability_node_metrics_enabled=True
@@ -76,6 +78,11 @@ def main():
             head_node_build_timeout=timedelta(seconds=600)
         )
 
+        ports = [basic_port_forward(10001), basic_port_forward(8265)]
+        
+        if ENABLE_OBSERVABILITY:
+            ports.append(("localhost", 3000, str(raydog_cluster.observability_node_private_ip), 3000))
+            ports.append(("localhost", 9090, str(raydog_cluster.observability_node_private_ip), 9090))
         # Allow time for the API and Dashboard to start before creating
         # the SSH tunnels
         time.sleep(10)
@@ -83,6 +90,7 @@ def main():
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
             private_key_file="private-key",
+            ray_ports = ports
         )
         ssh_tunnels.start_tunnels()
 
@@ -90,8 +98,12 @@ def main():
         print(
             f"Ray head node and SSH tunnels started; using client at: {cluster_address}"
         )
-        print("Ray dashboard is available at: http://localhost:8265")
+        print("Ray dashboard: http://localhost:8265")
 
+        if ENABLE_OBSERVABILITY:
+            print("Grafana:       http://localhost:3000")
+            print("Prometheus:    http://localhost:9090")
+        
         input(
             "Wait for worker nodes to join the cluster ... then hit enter to run the sample job: "
         )
