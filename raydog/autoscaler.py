@@ -102,10 +102,8 @@ class RayDogNodeProvider(NodeProvider):
 
             # Make sure that YellowDog knows about this cluster
             if not self._raydog.find_raydog_cluster():
-                raise Exception(f"Failed to find  info in YellowDog for {cluster_name}")
+                raise Exception(f"Failed to find info in YellowDog for {cluster_name}")
             
-            self._headid = self._raydog.head_node_task_id
-
             # Wait for the client to upload initial tag data
             self._load_tags_sent_from_client()
         else:
@@ -113,10 +111,7 @@ class RayDogNodeProvider(NodeProvider):
             self._raydog = RayDogClient(provider_config, cluster_name, self._tag_store)
 
             if self._raydog.find_raydog_cluster():
-                # Connect to an existing head node
-                self._headid = self._raydog.head_node_task_id
-
-                # Get the tags from the head node 
+                # Get the tags an existing head node
                 self._pull_tags_from_head_node()
             else:
                 # Ray will create a new head node ... later
@@ -210,7 +205,7 @@ class RayDogNodeProvider(NodeProvider):
         logger.debug(f"create_node {node_config} {tags} {count}")
 
         # Start creating instances 
-        flavour = tags['ray-user-node-type']
+        flavour = tags['ray-user-node-type'].lower()
         self._raydog.provision_instances(
             flavour=flavour,
             node_config=node_config, 
@@ -222,7 +217,7 @@ class RayDogNodeProvider(NodeProvider):
         node_type = tags['ray-node-type']
         if node_type == 'head':
             # Create a head node
-            self._headid = self._raydog.create_head_node(
+            self._raydog.create_head_node(
                 flavour=flavour,
                 tags=tags,
                 ray_start_script=self._get_script('head_start_ray_script')
@@ -281,9 +276,9 @@ class RayDogNodeProvider(NodeProvider):
         if not self._cmd_runner:
             self._cmd_runner = self.get_command_runner(
                 "Head Node",
-                self._headid,
+                self._raydog.head_node_task_id,
                 self._auth_config,
-                self._cluster_name,
+                self.cluster_name,
                 subprocess,
                 False,
             )
@@ -292,7 +287,7 @@ class RayDogNodeProvider(NodeProvider):
     def _get_tag_file_name(self, on_head:bool, client_tags:bool=False):
         dirname = "/opt/yellowdog/agent/tags" if on_head else ".tags" 
         suffix = "-client" if client_tags else "" 
-        return f"{dirname}/{self._cluster_name}{suffix}.json"
+        return f"{dirname}/{self.cluster_name}{suffix}.json"
 
     def _load_tags_sent_from_client(self):
         """Get tags uploaded from the client, with initial values for the head node"""
@@ -423,7 +418,6 @@ class TagStore():
                 self.new_node_info(node_id, tags)
 
 
-
 class RayDogBase():
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str, tag_store:TagStore):
         logger = logging.getLogger(__name__)
@@ -431,13 +425,15 @@ class RayDogBase():
 
         self._namespace = provider_config['namespace']
         self._cluster_name = cluster_name
-        self._cluster_tag = "cluster_tag"
+        self._cluster_tag = cluster_name
         
-        self.provider_config = provider_config
         self._tag_store = tag_store
 
         self._worker_pools = {}
-        self._work_requirement = None
+        self._work_requirement_id: str = None
+
+        # Pick an ID for this run, to avoid name clashes
+        self._uniqueid = ''.join(random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8))
 
         # Determine how long to wait for things
         self._cluster_lifetime = self._parse_timespan(provider_config.get('lifetime'))
@@ -462,9 +458,11 @@ class RayDogBase():
             pass
             #TODO: make the worker pool larger
         else:
+            worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
+
             compute_requirement_template_usage = ComputeRequirementTemplateUsage(
                 templateId=compute_requirement_template_id,
-                requirementName=flavour,
+                requirementName=worker_pool_name,
                 requirementNamespace=self._namespace,
                 requirementTag=self._cluster_tag,
                 targetInstanceCount=count,
@@ -549,7 +547,8 @@ class RayDogBase():
 
         self._is_shut_down: bool = (work_requirement.status != WorkRequirementStatus.RUNNING)
 
-        self._cluster_name: str = work_requirement.name
+        self._uniqueid: str = work_requirement.name[-8:]
+        self._cluster_name: str = work_requirement.name[:-9]
         self._cluster_tag: str = work_requirement.tag
 
         # Task group for the head node
@@ -602,7 +601,6 @@ class RayDogBase():
         #TODO: shutdown cleanly
         pass
     
-
     @staticmethod
     def _get_node_id_for_task(task: Task) -> str:
         """Get the YellowDog id for the node running a particular task. 
@@ -645,10 +643,12 @@ class RayDogClient(RayDogBase):
         start_time = datetime.now()
 
         # Create the work requirement in YellowDog, if it isn't already there 
-        if not self._work_requirement:
+        if self._work_requirement_id:
+            work_requirement = self.get_work_requirement()
+        else:
             work_requirement = WorkRequirement(
                 namespace=self._namespace,
-                name=self._cluster_name,
+                name=f"{self._cluster_name}-{self._uniqueid}",
                 tag=self._cluster_tag,
                 taskGroups=[
                     TaskGroup(
@@ -665,6 +665,8 @@ class RayDogClient(RayDogBase):
                     )
                 ],
             )
+
+            work_requirement = self.yd_client.work_client.add_work_requirement(work_requirement)
             self._work_requirement_id = work_requirement.id
 
         # Create a task to run the head node
@@ -680,7 +682,7 @@ class RayDogClient(RayDogBase):
         )
 
         self.head_node_task_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
-            self._work_requirement.taskGroups[0].id,
+            work_requirement.taskGroups[0].id,
             [head_node_task])[0].id
 
         # Wait for the head node to start
@@ -708,10 +710,7 @@ class RayDogClient(RayDogBase):
             task=head_task)
 
         # Extract the head node's IP addresses
-        self.head_node_node_id = self._get_node_id_for_task(head_task)
-        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(self.head_node_node_id)
-
-        node_info.ip = [self.head_node_private_ip, self.head_node_public_ip] 
+        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(head_task.id)
 
     def create_worker_nodes(self, 
         flavour: str,
