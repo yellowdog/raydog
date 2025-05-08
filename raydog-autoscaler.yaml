@@ -4,6 +4,7 @@ provider:
   module: raydog.autoscaler.RayDogNodeProvider
   namespace: raydog-example
   lifetime: 30m
+  build_timeout: 10m
 
   initialization_script: file:example-node-setup.sh
 
@@ -37,6 +38,7 @@ available_node_types:
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-split-ondemand           
       images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c
+      max_nodes: 1
 
   ray_worker_small:
     resources: { "CPU": 2 }
@@ -45,6 +47,7 @@ available_node_types:
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-split-ondemand           
       images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c
+      max_nodes: 100
       #images_id: ami-0fef583e486727263
 
 # Specify the node type of the head node (as configured above).

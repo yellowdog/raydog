@@ -4,31 +4,27 @@ import os
 import random
 import subprocess
 import sys
+import tempfile
 import time
-
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 from time import sleep
+from typing import Any, Dict, List, Optional
 
-from ray.autoscaler.node_provider import NodeProvider
-from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler._private.cli_logger import cli_logger
-
-from yellowdog_client.common import (
-    SearchClient
-)
-
+from ray.autoscaler.command_runner import CommandRunnerInterface
+from ray.autoscaler.node_provider import NodeProvider
+from yellowdog_client.common import SearchClient
 from yellowdog_client.model import (
-    ApiKey, 
+    ApiKey,
     AutoShutdown,
     ComputeRequirement,
     ComputeRequirementStatus,
     ComputeRequirementSummary,
     ComputeRequirementSummarySearch,
     ComputeRequirementTemplateUsage,
-    NodeWorkerTarget,
     Node,
+    NodeWorkerTarget,
     ProvisionedWorkerPoolProperties,
     RunSpecification,
     ServicesSchema,
@@ -42,10 +38,9 @@ from yellowdog_client.model import (
     WorkerPoolSummary,
     WorkRequirement,
     WorkRequirementSearch,
-    WorkRequirementStatus
+    WorkRequirementStatus,
 )
 from yellowdog_client.platform_client import PlatformClient
-
 
 TASK_TYPE = "bash"
 
@@ -184,9 +179,9 @@ class RayDogNodeProvider(NodeProvider):
 
         if node_id in self._tag_store.ray_tags:
             self._tag_store.ray_tags[node_id].update(tags)
+            self._write_tags_to_file()
         else:
             raise Exception(f"Unknown node id {node_id}")
-
         
     def external_ip(self, node_id: str) -> str:
         """Returns the external ip of the given node."""
@@ -272,6 +267,8 @@ class RayDogNodeProvider(NodeProvider):
 
 
     def _get_head_node_command_runner(self) -> CommandRunnerInterface :
+        assert self._auth_config
+
         """Create a CommandRunner object for the head node"""
         if not self._cmd_runner:
             self._cmd_runner = self.get_command_runner(
@@ -291,6 +288,7 @@ class RayDogNodeProvider(NodeProvider):
 
     def _load_tags_sent_from_client(self):
         """Get tags uploaded from the client, with initial values for the head node"""
+        assert self._on_head_node
 
         # wait for the file to arrive
         filename = self._get_tag_file_name(True, True)
@@ -303,6 +301,8 @@ class RayDogNodeProvider(NodeProvider):
 
     def _pull_tags_from_head_node(self) -> None:
         """Read tags from the head node"""
+        assert not self._on_head_node
+
         remotefile = self._get_tag_file_name(True)
         localfile = self._get_tag_file_name(False)
 
@@ -314,6 +314,8 @@ class RayDogNodeProvider(NodeProvider):
 
     def _push_tags_to_head_node(self) -> None:
         """Upload tag data to the head node"""
+        assert not self._on_head_node
+
         remotefile = self._get_tag_file_name(True, True)
         localfile = self._get_tag_file_name(False, True)
 
@@ -324,10 +326,10 @@ class RayDogNodeProvider(NodeProvider):
     def _write_tags_to_file(self, filename:str=None) -> None:
         """Store all the Ray tags in a file"""
 
-        # Act like we're on the head node, unless told otherwise
+        # work out the filename, if it isn't specified
         if not filename:
-            filename = self._get_tag_file_name(True)
-
+            filename = self._get_tag_file_name(self._on_head_node, not self._on_head_node)
+                
         # Make sure the directory exists
         dirname = os.path.dirname(filename)
         if not os.path.exists(dirname):
@@ -375,18 +377,24 @@ class TagStore():
 
     # NB: the node_id parameter for all these functions is really a Yellowdog task id
     def get_node_info(self, node_id:str) -> NodeInfo:
+        assert node_id.startswith("ydid:task:")
+
         info = self.node_info.get(node_id)
         if not info:
             raise Exception(f"Unknown node id {node_id}")
         return info
 
     def new_node_info(self, node_id:str, ray_tags:Dict, task:Task) -> NodeInfo:
+        assert node_id.startswith("ydid:task:")
+
         info = NodeInfo(task_id=node_id, task=task, tags=ray_tags)
         self.node_info[node_id] = info
         self.ray_tags[node_id] = info.tags
         return info
 
     def del_node_info(self, node_id:str) -> None:
+        assert node_id.startswith("ydid:task:")
+
         if node_id in self.node_info:
             del self.node_info[node_id]
             del self.ray_tags[node_id]
@@ -456,7 +464,7 @@ class RayDogBase():
         #TODO: handle the on-prem case
         if flavour in self._worker_pools:
             pass
-            #TODO: make the worker pool larger
+            #TODO: enlarge the worker pool, if needed
         else:
             worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
 
@@ -477,7 +485,7 @@ class RayDogBase():
             provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
                 createNodeWorkers=NodeWorkerTarget.per_node(1),
                 minNodes=1,
-                maxNodes=100, #TODO: make this configurable/bigger
+                maxNodes=node_config.get("max_nodes", 1000),
                 workerTag=flavour,
                 metricsEnabled=metrics_enabled,
                 idleNodeShutdown=auto_shut_down,
@@ -564,7 +572,10 @@ class RayDogBase():
         # Create some dummy Ray tags 
         self._tag_store.new_node_info(
             node_id=head_task.id,
-            ray_tags={},
+            ray_tags= {
+                'ray-node-type' : 'head',
+                'ray-node-status': 'up-to-date'
+            },
             task=head_task)
 
         # Get the node details for the head node
