@@ -10,6 +10,7 @@ name = "raydog"
 version = "1.0.0"
 dependencies = [
     "yellowdog-sdk>=9.1.0",
+    "sshtunnel",
     "ray", 
     "ray[client]"
 ]
