@@ -287,7 +287,11 @@ class RayDogCluster:
                 taskData=worker_node_task_script,
                 arguments=["taskdata.txt"],
                 environment={},
-                outputs=None if worker_node_capture_taskoutput is False else self._taskoutput,
+                outputs=(
+                    None
+                    if worker_node_capture_taskoutput is False
+                    else self._taskoutput
+                ),
             ),
         )
 
@@ -563,4 +567,4 @@ class RayDogCluster:
         Generate a unique task name.
         """
         self._task_number += 1
-        return f"task-{str(self._task_number).zfill(4)}"
+        return f"task-{str(self._task_number).zfill(5)}"
