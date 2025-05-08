@@ -79,6 +79,7 @@ class RayDogCluster:
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
         head_node_ray_start_script: str = DEFAULT_SCRIPTS["head-node-task-script"],
+        head_node_capture_taskoutput: bool = False,
         enable_observability: bool = False,
         observability_node_compute_requirement_template_id: str | None = None,
         observability_node_instance_tags: dict[str, str] | None = None,
@@ -90,8 +91,8 @@ class RayDogCluster:
         observability_node_start_script: str = DEFAULT_SCRIPTS[
             "observability-node-task-script"
         ],
-            head_node_capture_taskoutput: bool = False,
-            cluster_lifetime: timedelta | None = None,
+        observability_node_capture_taskoutput: bool = False,
+        cluster_lifetime: timedelta | None = None,
     ):
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
@@ -134,6 +135,8 @@ class RayDogCluster:
             the observability node.
         :param observability_node_start_script: the Bash script for starting the observability
             node processes.
+        :param observability_node_capture_taskoutput: whether to capture the console output
+            of the observability node task.
         :param cluster_lifetime: an optional timeout that will shut down the Ray
             cluster if it expires.
         """
@@ -146,7 +149,6 @@ class RayDogCluster:
         self._task_number = 0  # Running total of tasks
 
         head_node_naming = f"{cluster_name}-00-head"
-        observability_node_naming = f"{cluster_name}-observability-00"
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
@@ -272,9 +274,15 @@ class RayDogCluster:
         )
 
         self._observability_node_task = Task(
+            name=self._next_task_name,
             taskType=TASK_TYPE,
             taskData=observability_node_start_script,
             arguments=["taskdata.txt"],
+            outputs=(
+                None
+                if observability_node_capture_taskoutput is False
+                else self._taskoutput
+            ),
         )
 
         self.observability_node_id: str | None = None
@@ -293,7 +301,7 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_task_script: str = DEFAULT_SCRIPTS["worker-node-task-script"],
-            worker_node_capture_taskoutput: bool = False,
+        worker_node_capture_taskoutput: bool = False,
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -370,7 +378,11 @@ class RayDogCluster:
                 taskData=worker_node_task_script,
                 arguments=["taskdata.txt"],
                 environment={},
-                outputs=None if worker_node_capture_taskoutput is False else self._taskoutput,
+                outputs=(
+                    None
+                    if worker_node_capture_taskoutput is False
+                    else self._taskoutput
+                ),
             ),
         )
 
@@ -705,4 +717,4 @@ class RayDogCluster:
         Generate a unique task name.
         """
         self._task_number += 1
-        return f"task-{str(self._task_number).zfill(4)}"
+        return f"task-{str(self._task_number).zfill(5)}"

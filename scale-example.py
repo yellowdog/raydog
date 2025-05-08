@@ -54,6 +54,8 @@ def main():
             observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
             observability_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
             observability_node_metrics_enabled=True,
+            head_node_capture_taskoutput=True,
+            observability_node_capture_taskoutput=True,
         )
 
         # Add the worker pools
@@ -65,6 +67,7 @@ def main():
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
                 worker_node_metrics_enabled=True,
+                worker_node_capture_taskoutput=True,
             )
 
         # Build the Ray cluster
