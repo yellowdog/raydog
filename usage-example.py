@@ -117,7 +117,8 @@ def estimate_pi(cluster_address):
     # Shutdown Ray
     ray.shutdown()
 
-# 
+
+#
 # Entry point
 if __name__ == "__main__":
     main()
