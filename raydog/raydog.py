@@ -2,6 +2,7 @@
 Build a Ray cluster using YellowDog.
 """
 
+from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -115,6 +116,8 @@ class RayDogCluster:
         self._cluster_tag = cluster_tag
         self._cluster_lifetime = cluster_lifetime
 
+        self._task_number = 0  # Running total of tasks
+
         head_node_naming = f"{cluster_name}-00-head"
 
         self._auto_shut_down = AutoShutdown(
@@ -148,6 +151,7 @@ class RayDogCluster:
         )
 
         self._head_node_task = Task(
+            name=self._next_task_name,
             taskType=TASK_TYPE,
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
@@ -531,12 +535,21 @@ class RayDogCluster:
         worker_node_worker_pool.task_prototype.environment.update(
             {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
         )
-        self.yd_client.work_client.add_tasks_to_task_group_by_id(
-            task_group_id,
-            [
-                worker_node_worker_pool.task_prototype
-                for _ in range(
-                    worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
-                )
-            ],
-        )
+
+        tasks: list[Task] = []
+        for _ in range(
+            worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
+        ):
+            task = copy(worker_node_worker_pool.task_prototype)
+            task.name = self._next_task_name
+            tasks.append(task)
+
+        self.yd_client.work_client.add_tasks_to_task_group_by_id(task_group_id, tasks)
+
+    @property
+    def _next_task_name(self) -> str:
+        """
+        Generate a unique task name.
+        """
+        self._task_number += 1
+        return f"task-{str(self._task_number).zfill(4)}"
