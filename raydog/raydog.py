@@ -20,6 +20,7 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
+    TaskOutput,
     TaskStatus,
     WorkRequirement,
 )
@@ -80,6 +81,7 @@ class RayDogCluster:
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
         head_node_ray_start_script: str = HEAD_NODE_RAY_START_SCRIPT_DEFAULT,
+        head_node_capture_taskoutput: bool = False,
         cluster_lifetime: timedelta | None = None,
     ):
         """
@@ -107,6 +109,8 @@ class RayDogCluster:
             head node.
         :param head_node_ray_start_script: the Bash script for starting the ray head
             node.
+        :param head_node_capture_taskoutput: whether to capture the console output of the
+            head node task.
         :param cluster_lifetime: an optional timeout that will shut down the Ray
             cluster if it expires.
         """
@@ -124,6 +128,8 @@ class RayDogCluster:
             enabled=True,
             timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES),
         )
+
+        self._taskoutput = [TaskOutput.from_task_process()]
 
         self._head_node_compute_requirement_template_usage = (
             ComputeRequirementTemplateUsage(
@@ -155,6 +161,7 @@ class RayDogCluster:
             taskType=TASK_TYPE,
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
+            outputs=None if head_node_capture_taskoutput is False else self._taskoutput,
         )
 
         self._work_requirement = WorkRequirement(
