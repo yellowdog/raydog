@@ -2,6 +2,7 @@
 Build a Ray cluster using YellowDog.
 """
 
+from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from os import path
@@ -20,6 +21,7 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
+    TaskOutput,
     TaskStatus,
     WorkRequirement,
 )
@@ -88,7 +90,8 @@ class RayDogCluster:
         observability_node_start_script: str = DEFAULT_SCRIPTS[
             "observability-node-task-script"
         ],
-        cluster_lifetime: timedelta | None = None,
+            head_node_capture_taskoutput: bool = False,
+            cluster_lifetime: timedelta | None = None,
     ):
         """
         Initialise the properties of the RayDog cluster and the Ray head node.
@@ -116,6 +119,8 @@ class RayDogCluster:
             head node.
         :param head_node_ray_start_script: the Bash script for starting the ray head
             node processes.
+        :param head_node_capture_taskoutput: whether to capture the console output of the
+            head node task.
         :param enable_observability: whether to enable observability node support
         :param observability_node_compute_requirement_template_id: the compute requirement
             template to use for the observability node.
@@ -138,6 +143,8 @@ class RayDogCluster:
         self._cluster_tag = cluster_tag
         self._cluster_lifetime = cluster_lifetime
 
+        self._task_number = 0  # Running total of tasks
+
         head_node_naming = f"{cluster_name}-00-head"
         observability_node_naming = f"{cluster_name}-observability-00"
 
@@ -145,6 +152,8 @@ class RayDogCluster:
             enabled=True,
             timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES),
         )
+
+        self._taskoutput = [TaskOutput.from_task_process()]
 
         self._head_node_compute_requirement_template_usage = (
             ComputeRequirementTemplateUsage(
@@ -172,10 +181,12 @@ class RayDogCluster:
         )
 
         self._head_node_task = Task(
+            name=self._next_task_name,
             taskType=TASK_TYPE,
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
             environment={},
+            outputs=None if head_node_capture_taskoutput is False else self._taskoutput,
         )
 
         self._work_requirement = WorkRequirement(
@@ -282,6 +293,7 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_task_script: str = DEFAULT_SCRIPTS["worker-node-task-script"],
+            worker_node_capture_taskoutput: bool = False,
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -303,6 +315,8 @@ class RayDogCluster:
             worker nodes.
         :param worker_node_task_script: the Bash script for starting the ray worker
             nodes in this worker pool.
+        :param worker_node_capture_taskoutput: whether to capture the console output of the
+            worker node tasks.
         :return: returns the worker pool ID if a worker pool was created, or None if the
             pool will be created later using the build() method.
         """
@@ -356,6 +370,7 @@ class RayDogCluster:
                 taskData=worker_node_task_script,
                 arguments=["taskdata.txt"],
                 environment={},
+                outputs=None if worker_node_capture_taskoutput is False else self._taskoutput,
             ),
         )
 
@@ -521,8 +536,6 @@ class RayDogCluster:
         self.head_node_private_ip = node.details.privateIpAddress
         self.head_node_public_ip = node.details.publicIpAddress
 
-        # Set the head node ID and get the node details
-
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, worker_node_worker_pool in enumerate(
             self.worker_node_worker_pools.values()
@@ -676,12 +689,20 @@ class RayDogCluster:
                 {"OBSERVABILITY_HOST": self.observability_node_private_ip}
             )
 
-        self.yd_client.work_client.add_tasks_to_task_group_by_id(
-            task_group_id,
-            [
-                worker_node_worker_pool.task_prototype
-                for _ in range(
-                    worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
-                )
-            ],
-        )
+        tasks: list[Task] = []
+        for _ in range(
+            worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
+        ):
+            task = copy(worker_node_worker_pool.task_prototype)
+            task.name = self._next_task_name
+            tasks.append(task)
+
+        self.yd_client.work_client.add_tasks_to_task_group_by_id(task_group_id, tasks)
+
+    @property
+    def _next_task_name(self) -> str:
+        """
+        Generate a unique task name.
+        """
+        self._task_number += 1
+        return f"task-{str(self._task_number).zfill(4)}"
