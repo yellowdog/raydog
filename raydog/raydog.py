@@ -210,6 +210,7 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_task_script: str = WORKER_NODE_RAY_START_SCRIPT_DEFAULT,
+        worker_node_capture_taskoutput: bool = False,
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -231,6 +232,8 @@ class RayDogCluster:
             worker nodes.
         :param worker_node_task_script: the Bash script for starting the ray worker
             nodes in this worker pool.
+        :param worker_node_capture_taskoutput: whether to capture the console output of the
+            worker node tasks.
         :return: returns the worker pool ID if a worker pool was created, or None if the
             pool will be created later using the build() method.
         """
@@ -284,6 +287,7 @@ class RayDogCluster:
                 taskData=worker_node_task_script,
                 arguments=["taskdata.txt"],
                 environment={},
+                outputs=None if worker_node_capture_taskoutput is False else self._taskoutput,
             ),
         )
 
