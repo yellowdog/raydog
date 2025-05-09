@@ -34,8 +34,8 @@ OBSERVABILITY_NODE_TASK_GROUP_NAME = "observability-node"
 
 TASK_TYPE = "bash"
 
-HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
-IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 3.0
+HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10)
+IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT = timedelta(minutes=3)
 
 
 @dataclass
@@ -135,7 +135,7 @@ class RayDogCluster:
 
         self._auto_shut_down = AutoShutdown(
             enabled=True,
-            timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES),
+            timeout=IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT,
         )
 
         self._taskoutput = [TaskOutput.from_task_process()]
@@ -525,7 +525,7 @@ class RayDogCluster:
                 raise TimeoutError(
                     "Timeout waiting for Ray head node task to enter EXECUTING state"
                 )
-            sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
+            sleep(HEAD_NODE_TASK_POLLING_INTERVAL.seconds)
 
         # Set the head node ID and get the node details
         self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
