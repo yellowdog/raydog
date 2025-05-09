@@ -4,13 +4,26 @@ import logging
 import random
 from datetime import datetime, timedelta
 from fractions import Fraction
-from os import getenv
+from os import getenv, path
 from time import sleep
 
 import dotenv
 import ray
 
 from raydog.raydog import RayDogCluster
+
+# Load the example userdata and task scripts
+CURRENT_DIR = path.dirname(path.abspath(__file__))
+SCRIPT_PATHS = {
+    "node-setup-userdata": "scripts/node-setup-userdata.sh",
+    "head-node-task-script": "scripts/head-node-task-script.sh",
+    "worker-node-task-script": "scripts/worker-node-task-script.sh",
+    "observability-node-task-script": "scripts/observability-node-task-script.sh",
+}
+DEFAULT_SCRIPTS = {}
+for name, script_path in SCRIPT_PATHS.items():
+    with open(path.join(CURRENT_DIR, script_path), "r") as file:
+        DEFAULT_SCRIPTS[name] = file.read()
 
 
 def main():
@@ -31,6 +44,8 @@ def main():
             cluster_tag="my-ray-tag",
             cluster_lifetime=timedelta(seconds=600),
             head_node_metrics_enabled=True,
+            head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
+            head_node_userdata=DEFAULT_SCRIPTS["node-setup-userdata"],
         )
 
         # Add the worker pools
@@ -40,6 +55,8 @@ def main():
                 worker_pool_node_count=2,
                 worker_node_images_id="ami-0fef583e486727263",
                 worker_node_metrics_enabled=True,
+                worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
+                worker_node_userdata=DEFAULT_SCRIPTS["node-setup-userdata"],
             )
 
         # Build the Ray cluster

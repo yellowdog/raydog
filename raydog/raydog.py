@@ -5,7 +5,6 @@ Build a Ray cluster using YellowDog.
 from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from os import path
 from time import sleep
 
 from requests.exceptions import HTTPError
@@ -26,18 +25,6 @@ from yellowdog_client.model import (
     WorkRequirement,
 )
 from yellowdog_client.platform_client import PlatformClient
-
-CURRENT_DIR = path.dirname(path.abspath(__file__))
-SCRIPT_PATHS = {
-    "node-setup-userdata": "scripts/node-setup-userdata.sh",
-    "head-node-task-script": "scripts/head-node-task-script.sh",
-    "worker-node-task-script": "scripts/worker-node-task-script.sh",
-    "observability-node-task-script": "scripts/observability-node-task-script.sh",
-}
-DEFAULT_SCRIPTS = {}
-for name, script_path in SCRIPT_PATHS.items():
-    with open(path.join(CURRENT_DIR, script_path), "r") as file:
-        DEFAULT_SCRIPTS[name] = file.read()
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
@@ -72,25 +59,21 @@ class RayDogCluster:
         cluster_name: str,
         cluster_namespace: str,
         head_node_compute_requirement_template_id: str,
+        head_node_ray_start_script: str,
         yd_platform_api_url: str = YD_DEFAULT_API_URL,
         cluster_tag: str | None = None,
         head_node_images_id: str | None = None,
-        head_node_userdata: str | None = DEFAULT_SCRIPTS["node-setup-userdata"],
+        head_node_userdata: str | None = None,
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
-        head_node_ray_start_script: str = DEFAULT_SCRIPTS["head-node-task-script"],
         head_node_capture_taskoutput: bool = False,
         enable_observability: bool = False,
         observability_node_compute_requirement_template_id: str | None = None,
         observability_node_instance_tags: dict[str, str] | None = None,
         observability_node_images_id: str | None = None,
-        observability_node_userdata: str | None = DEFAULT_SCRIPTS[
-            "node-setup-userdata"
-        ],
+        observability_node_userdata: str | None = None,
         observability_node_metrics_enabled: bool | None = None,
-        observability_node_start_script: str = DEFAULT_SCRIPTS[
-            "observability-node-task-script"
-        ],
+        observability_node_start_script: str | None = None,
         observability_node_capture_taskoutput: bool = False,
         cluster_lifetime: timedelta | None = None,
     ):
@@ -107,6 +90,8 @@ class RayDogCluster:
         :param cluster_namespace: the YellowDog namespace to use for the cluster.
         :param head_node_compute_requirement_template_id: the YellowDog
             compute requirement template ID for the head node.
+        :param head_node_ray_start_script: the Bash script for starting the ray head
+            node processes.
         :param yd_platform_api_url: the URL of the YellowDog platform API.
         :param cluster_tag: an optional tag to use for the YellowDog work requirement
             and worker pool(s).
@@ -118,8 +103,6 @@ class RayDogCluster:
             instance.
         :param head_node_metrics_enabled: whether to enable metrics collection for the
             head node.
-        :param head_node_ray_start_script: the Bash script for starting the ray head
-            node processes.
         :param head_node_capture_taskoutput: whether to capture the console output of the
             head node task.
         :param enable_observability: whether to enable observability node support
@@ -295,13 +278,13 @@ class RayDogCluster:
     def add_worker_pool(
         self,
         worker_node_compute_requirement_template_id: str,
+        worker_node_task_script: str,
         worker_pool_node_count: int,
         worker_pool_internal_name: str | None = None,
         worker_node_images_id: str | None = None,
-        worker_node_userdata: str | None = DEFAULT_SCRIPTS["node-setup-userdata"],
+        worker_node_userdata: str | None = None,
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
-        worker_node_task_script: str = DEFAULT_SCRIPTS["worker-node-task-script"],
         worker_node_capture_taskoutput: bool = False,
     ) -> str | None:
         """
@@ -310,6 +293,8 @@ class RayDogCluster:
         :param worker_node_compute_requirement_template_id: the YellowDog compute
             requirement template ID to use for the worker nodes in this worker
             pool.
+        :param worker_node_task_script: the Bash script for starting the ray worker
+            nodes in this worker pool.
         :param worker_pool_node_count: the number of ray worker nodes to create in
             this worker pool. Must be > 0.
         :param worker_pool_internal_name: an optional internal name that can be used
@@ -322,8 +307,6 @@ class RayDogCluster:
             worker node instances.
         :param worker_node_metrics_enabled: whether to enable metrics collection for the
             worker nodes.
-        :param worker_node_task_script: the Bash script for starting the ray worker
-            nodes in this worker pool.
         :param worker_node_capture_taskoutput: whether to capture the console output of the
             worker node tasks.
         :return: returns the worker pool ID if a worker pool was created, or None if the

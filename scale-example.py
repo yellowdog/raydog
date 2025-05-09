@@ -14,18 +14,33 @@ TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
-ENABLE_OBSERVABILITY = False
+ENABLE_OBSERVABILITY = True
 
 import logging
 import time
 from datetime import datetime, timedelta
-from os import getenv
+from os import getenv, path
 
 import dotenv
 import ray
 
 from raydog.raydog import RayDogCluster
 from utils.ray_ssh_tunnels import RayTunnels, basic_port_forward
+
+# Load the example userdata and task scripts
+CURRENT_DIR = path.dirname(path.abspath(__file__))
+SCRIPT_PATHS = {
+    "node-setup-userdata": "scripts/node-setup-userdata.sh",
+    "head-node-task-script": "scripts/head-node-task-script.sh",
+    "worker-node-task-script": "scripts/worker-node-task-script.sh",
+    "observability-node-task-script": "scripts/observability-node-task-script.sh",
+}
+DEFAULT_SCRIPTS = {}
+for name, script_path in SCRIPT_PATHS.items():
+    with open(path.join(CURRENT_DIR, script_path), "r") as file:
+        DEFAULT_SCRIPTS[name] = file.read()
+
+USERDATA = DEFAULT_SCRIPTS["node-setup-userdata"] if ENABLE_OBSERVABILITY else None
 
 
 def main():
@@ -50,12 +65,18 @@ def main():
             ),
             head_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
             head_node_metrics_enabled=True,
+            head_node_userdata=USERDATA,
+            head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
             enable_observability=ENABLE_OBSERVABILITY,
             observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
             observability_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
             observability_node_metrics_enabled=True,
+            observability_node_userdata=USERDATA,
             head_node_capture_taskoutput=True,
             observability_node_capture_taskoutput=True,
+            observability_node_start_script=DEFAULT_SCRIPTS[
+                "observability-node-task-script"
+            ],
         )
 
         # Add the worker pools
@@ -67,6 +88,8 @@ def main():
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
                 worker_node_metrics_enabled=True,
+                worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
+                worker_node_userdata=USERDATA,
                 worker_node_capture_taskoutput=True,
             )
 
