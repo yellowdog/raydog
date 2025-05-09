@@ -52,3 +52,9 @@ trap "ray stop; echo Ray stopped" EXIT
 When Ray is started on either the head node or worker nodes, use the `--block` option with the `ray start` command, to ensure the YellowDog task lifecycle matches that of the Ray processes.
 
 For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable `RAY_HEAD_NODE_PRIVATE_IP`.
+
+## Observability
+
+An **observability node** can optionally be added to the RayDog cluster, hosting Prometheus and Grafana to supply information to the Ray dashboard. The node is added by setting the `RayDogCluster` constructor argument `enable_observability` to `True`, supplying the required values for instance provisioning, and for the task script that starts up the required observability processes.
+
+The private IP address of the observability node is available in the `OBSERVABILITY_HOST` environment variable supplied to the head node task and the worker node tasks, and this can be used to set up the required observability connections.
