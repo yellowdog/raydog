@@ -212,6 +212,7 @@ class RayDogCluster:
 
         self._task_group_running_total = 0  # Note: never decremented
 
+        self._is_built = False
         self._is_shut_down = False
 
         # Properties publicly available for reading
@@ -398,8 +399,8 @@ class RayDogCluster:
             )
         self.worker_node_worker_pools.update({internal_name: worker_node_worker_pool})
 
-        if self.head_node_private_ip is None:
-            return None  # No head node set up yet; wait for build()
+        if not self._is_built:
+            return None  # Don't provision the worker pool; wait for build()
 
         # Provision the new worker pool
         worker_node_worker_pool.worker_pool_id = (
@@ -444,6 +445,9 @@ class RayDogCluster:
         :return: a tuple containing the private IP address of the head node, and the
             public IP address of the head node (or None).
         """
+
+        if self._is_built:
+            raise Exception("'build()' method already called")
 
         if self._is_shut_down:
             raise Exception("'build()' method called on already shut-down cluster")
@@ -563,6 +567,7 @@ class RayDogCluster:
                 worker_node_worker_pool=worker_node_worker_pool,
             )
 
+        self._is_built = True
         return self.head_node_private_ip, self.head_node_public_ip
 
     def remove_worker_pool(self, worker_pool_id: str):
