@@ -25,7 +25,7 @@ import dotenv
 import ray
 
 from raydog.raydog import RayDogCluster
-from utils.ray_ssh_tunnels import RayTunnels, basic_port_forward
+from utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
@@ -100,19 +100,22 @@ def main():
         )
         print(f"Ray head node started at public IP address: '{public_ip}'")
 
-        ports = [basic_port_forward(10001), basic_port_forward(8265)]
+        tunnels = [
+            RayTunnels.basic_port_forward(10001),
+            RayTunnels.basic_port_forward(8265),
+        ]
 
         if ENABLE_OBSERVABILITY:
-            ports.append(
-                (
+            tunnels.append(
+                SSHTunnelSpec(
                     "localhost",
                     3000,
                     str(raydog_cluster.observability_node_private_ip),
                     3000,
                 )
             )
-            ports.append(
-                (
+            tunnels.append(
+                SSHTunnelSpec(
                     "localhost",
                     9090,
                     str(raydog_cluster.observability_node_private_ip),
@@ -128,7 +131,7 @@ def main():
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
             private_key_file="private-key",
-            ray_ports=ports,
+            ray_tunnel_specs=tunnels,
         )
         ssh_tunnels.start_tunnels()
 

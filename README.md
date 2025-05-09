@@ -68,3 +68,10 @@ For the script used to set up Ray worker nodes, the private IP address of the he
 An **observability node** can optionally be added to the RayDog cluster, hosting Prometheus and Grafana to supply information to the Ray dashboard. The node is added by setting the `RayDogCluster` constructor argument `enable_observability` to `True`, supplying the required values for instance provisioning, and for the task script that starts up the required observability processes.
 
 The private IP address of the observability node is available in the `OBSERVABILITY_HOST` environment variable supplied to the head node task and the worker node tasks, and this can be used to set up the required observability connections.
+
+## Creating SSH Tunnels for the Ray client, dashboard, etc.
+
+The utility class [`RayTunnels`](utils/ray_ssh_tunnels.py) allows SSH tunnels to be created using a local private key to SSH to the public IP of the Ray head node. The class is also used for establishing the required tunnels if observability is used. The client, etc., can then be accessed using, e.g., `localhost:10001`.
+
+The `RayTunnels` class depends on the `sshtunnel` package.
+

@@ -23,6 +23,7 @@ for ITEM in README.md \
             private-key \
             jupyter-demo.ipynb \
             scripts \
+            utils \
             CHANGELOG.txt
 do
   cp -r $ITEM $DIST/$RAYDOG/.
