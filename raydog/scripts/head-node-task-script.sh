@@ -17,5 +17,4 @@ fi
 
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-/opt/yellowdog/agent/.local/bin/uv pip install -U ray[default] # Required for dashboard capability
 ray start $RAY_ARGS
