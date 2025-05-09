@@ -16,7 +16,7 @@ provider:
   - VENV=/opt/yellowdog/agent/venv
   - source $VENV/bin/activate
   - ray stop
-  - ray start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/raydog-autoscaler.yaml --block
+  - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/raydog-autoscaler.yaml --block
 
   worker_start_ray_script:
   - "#!/bin/bash"
