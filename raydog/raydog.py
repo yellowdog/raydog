@@ -215,7 +215,6 @@ class RayDogCluster:
         if not self.enable_observability:
             return
 
-        # Set observability node properties
         observability_node_naming = f"{cluster_name}-observability-00"
 
         self._observability_node_compute_requirement_template_usage = (
@@ -269,6 +268,7 @@ class RayDogCluster:
             ),
         )
 
+        # Properties publicly available for reading
         self.observability_node_id: str | None = None
         self.observability_node_private_ip: str | None = None
         self.observability_node_worker_pool_id: str | None = None
