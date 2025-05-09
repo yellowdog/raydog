@@ -23,10 +23,6 @@ from yellowdog_client.common import SearchClient
 from yellowdog_client.model import (
     ApiKey,
     AutoShutdown,
-    ComputeRequirement,
-    ComputeRequirementStatus,
-    ComputeRequirementSummary,
-    ComputeRequirementSummarySearch,
     ComputeRequirementTemplateUsage,
     Node,
     NodeWorkerTarget,
@@ -38,9 +34,6 @@ from yellowdog_client.model import (
     TaskSearch,
     TaskStatus,
     WorkerPool,
-    WorkerPoolSearch,
-    WorkerPoolStatus,
-    WorkerPoolSummary,
     WorkRequirement,
     WorkRequirementSearch,
     WorkRequirementStatus,
@@ -100,7 +93,7 @@ class RayDogNodeProvider(NodeProvider):
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
             # Get the tag server running
-            start_tag_server(self._tag_store)
+            self._tag_server = TagServer(self._tag_store.ray_tags, TAG_SERVER_PORT)
 
             # Running on the head node
             self._raydog = RayDogHead(provider_config, cluster_name, self._tag_store)
@@ -114,8 +107,10 @@ class RayDogNodeProvider(NodeProvider):
             self._raydog = RayDogClient(provider_config, cluster_name, self._tag_store)
 
             if self._raydog.find_raydog_cluster():
-                # Get the tags an existing head node
+                # Get the tags from an existing head node
+                logger.debug(f"Found an existimg head node")
                 self._connect_to_tag_server()
+                self._read_tags_from_head_node()
             else:
                 # Ray will create a new head node ... later
                 pass
@@ -226,9 +221,10 @@ class RayDogNodeProvider(NodeProvider):
                 ray_start_script=self._get_script('head_start_ray_script')
             )
 
-            # Send initial tag values to the head node
+            # Sync tag values with the head node
             self._connect_to_tag_server()
             self._send_tags_to_head_node(self._tag_store.ray_tags)
+            self._read_tags_from_head_node()
         else:
             # Create worker nodes
             self._raydog.create_worker_nodes(
@@ -291,44 +287,78 @@ class RayDogNodeProvider(NodeProvider):
         return self._cmd_runner
 
     def _connect_to_tag_server(self):
+        """Open a connection to the tag server, via an SSH tunnel"""
         assert not self._on_head_node
         assert self._auth_config
 
-        # setup SSH tunnel
+        self.tunnel = None
+
+        retry = 10
+        while retry > 0:
+            try:
+                # Setup an SSH tunnel to the tag server on the head node
+                self._connect_ssh_tunnel()
+
+                # Make a connection
+                logger.info("Connecting to tag server")
+                sock = socket.create_connection(('127.0.0.1', self.tunnel.local_bind_port))
+                self._remote_tag_server = sock
+
+                # Try a wake-up message
+                hello = self._message_to_tag_server('?', '')
+                logger.debug(f"Tag server response: {hello}")
+
+                # If we made this far without an exceptoin, we're conencted
+                break
+            except:
+                # Retry if something goes wrong
+                logger.info(f"Connection failed. Will retry {retry} more times")
+                sleep(5.0)
+                retry -= 1    
+
+    def _connect_ssh_tunnel(self):
+        assert not self._on_head_node
+        assert self._auth_config
+
+        # Skip if tunnel is ok
+        if self.tunnel:
+            self.tunnel.check_tunnels()
+            if self.tunnel.tunnel_is_up:
+                return
+
+        # Setup an SSH tunnel to the tag server on the head node
         ip = self._raydog.head_node_public_ip
+
         logger.debug(f"Setting up SSH tunnel to tag server on {ip}")
-        tunnel = SSHTunnelForwarder(
+        self.tunnel = SSHTunnelForwarder(
             ip,
             ssh_username=self._auth_config['ssh_user'],
             ssh_pkey=self._auth_config['ssh_private_key'],
             remote_bind_address=('127.0.0.1', TAG_SERVER_PORT)
         )
-        tunnel.start()
+        self.tunnel.start()
 
-        logger.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
+        logger.debug(f"SSH tunnel local port {self.tunnel.local_bind_port}")
 
-        # Open a local socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-        sock.connect(('127.0.0.1', tunnel.local_bind_port))
-        self._tag_server = sock
+    def _message_to_tag_server(self, operation: str, data_in: str) -> str:
+        assert not self._on_head_node 
 
-    def _message_to_tag_server(self, operation, data_in):
-        assert not self._on_head_node          
-        _send_message(self._tag_server, operation, data_in)
-        reply, data_out = _receive_message(self._tag_server)
-        assert reply == b'K'
+        TagProtocol.send_message(self._remote_tag_server, operation, data_in)
+        reply, data_out = TagProtocol.receive_message(self._remote_tag_server)
+        assert reply == 'K'
         return data_out
 
     def _read_tags_from_head_node(self) -> None:
         """Read tags from the head node"""
-        data = self._message_to_tag_server(b'G', b'')
+        data = self._message_to_tag_server('G', '')
  
         newtags = json.loads(data)
+        logger.debug(f"Tags received from head node {newtags}")
         self._tag_store.ray_tags.update(newtags)
 
     def _send_tags_to_head_node(self, thetags) -> None:
         """Upload tag data to the head node"""
-        self._message_to_tag_server(b'U', _encode_tags(thetags))
+        self._message_to_tag_server('U', json.dumps(thetags))
 
     @staticmethod
     def _read_file(filename):
@@ -389,71 +419,102 @@ class TagStore():
             del self.node_info[node_id]
             del self.ray_tags[node_id]
 
-
 #----------------------------------------------------------------------------------------
 # Simple TCP server to share tags stored on the head node
-def _recv_bytes(req, n):
-    thebytes = bytearray()
-    while n > 0:
-        newdata = req.recv(n)
-        thebytes.extend(newdata)
-        n -= len(newdata)
-    return thebytes
 
-def _encode_tags(tags):
-    return bytes(json.dumps(tags), 'ascii')
+class TagProtocol:
+    """ Class to encapsulate the details of the custom low-level comms protocol
 
-def _receive_message(sock):
-    header = _recv_bytes(sock, 5)
-    operation, extra = struct.unpack("ci", header)
-    if extra:
-        payload = _recv_bytes(self.request, extra)
-    else:
-        payload = b''
-    return operation, payload
+        All messages start with a 1 byte opcode, followed by an 8 digit ASCII string 
+        giving the length of the data and then the actual data, as bytes.
 
-def _send_message(sock, operation, payload):
-    extra = len(payload) if payload else 0
-    header = struct.pack("ci", operation, extra)
-    sock.sendall(header + payload)
+        If there is no data to send, messages are shortened to the opcode plus ';'
+    """
+
+    @staticmethod
+    def _recv_bytes(sock: socket.socket, n: int) -> bytes:
+        thebytes = bytearray()
+        while n > 0:
+            newdata = sock.recv(n)
+            thebytes.extend(newdata)
+            n -= len(newdata)
+        return thebytes
+
+    @staticmethod
+    def send_message(sock: socket.socket, opcode: str, content: str) -> None:
+        logger.debug(f"Tx opcode:{opcode} content:{content}")
+
+        message = bytes(opcode, 'ascii')
+        if content:
+            extra_data = bytes(content, 'utf8')
+            extra_len = len(extra_data)
+
+            length_field = bytes(str(extra_len).zfill(8), 'ascii')
+            message += length_field + extra_data
+        else:
+            message += b';'
+
+        sock.sendall(message)
+
+    @staticmethod
+    def receive_message(sock: socket.socket) -> tuple[str, str]:
+        first2 =  TagProtocol._recv_bytes(sock, 2)
+
+        opcode = chr(first2[0])
+        if first2[1] in [ ord(';'),  ord('\n') ]:
+            content = '' 
+        else:
+            next7 = TagProtocol._recv_bytes(sock, 7)
+            extra_len = int(first2[1:2] + next7)
+            extra_data = TagProtocol._recv_bytes(sock, extra_len)
+            content = str(extra_data, 'utf8')
+
+        logger.debug(f"Rx opcode:{opcode} content:{content}")
+        return opcode, content
   
-class ThreadedTagRequestHandler(socketserver.BaseRequestHandler):
-    thetags: TagStore = None
+class TagRequestHandler(socketserver.BaseRequestHandler):
+    thetags = None
 
     def handle(self):
-        operation, payload = _receive_message(self.request)
-        if operation == b'G':
-            # get all the tags
-            response = _encode_tags(self.thetags.ray_tags)
-        elif operation == b'U':
-            # update tags 
-            newtags = json.loads(str(payload, 'ascii'))
-            self.thetags.ray_tags.update(newtags)
-            response = b''
-        else: 
-            response = b'RayDog Tag Server'
+        try:
+            while True:
+                opcode, content = TagProtocol.receive_message(self.request)
 
-        _send_message(self.request, b'K', response)
+                response = ''
+                if opcode == 'G':
+                    # get all the tags
+                    response = json.dumps(self.thetags)
+                elif opcode == 'U':
+                    newtags = json.loads(content)
+                    #TODO: add a mutex (or several) to serialise accesses
+                    self.thetags.update(newtags)
+                elif opcode == '?':
+                    response = 'RayDog Tag Server'
 
-class ThreadedTagServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    pass
+                TagProtocol.send_message(self.request, 'K', response)
+        except:
+            logger.error("Exception in Tag server")
+            return
 
-def start_tag_server(thetags: TagStore, port: int=16667):
-    ThreadedTagRequestHandler.thetags = thetags
+class TagServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    def __init__(self, thetags, port: int):
+        TagRequestHandler.thetags = thetags
 
-    server = ThreadedTagServer(("127.0.0.1", port), ThreadedTagRequestHandler)
-    with server:
-        ip, port = server.server_address
+        super().__init__(("127.0.0.1", port), TagRequestHandler)
 
-        # Start a thread with the server -- that thread will then start one
-        # more thread for each request
-        server_thread = threading.Thread(target=server.serve_forever)
-		
+        # Start a thread with the server, which will start another thread for each request
+        self.server_thread = threading.Thread(target=self._run_server)
+        
         # Exit the server thread when the main thread terminates
-        server_thread.daemon = True
-        server_thread.start()
-        logger.debug(f"Tag server started on {ip}:{port}")
+        self.server_thread.daemon = True
+        self.server_thread.start()
 
+    def _run_server(self):
+        ip, port = self.server_address
+
+        logger.debug(f"{datetime.now()} Tag server starting on {ip}:{port}")
+        self.serve_forever()
+        logger.debug(f"Tag server stopped")
 
 #----------------------------------------------------------------------------------------
 
@@ -610,7 +671,7 @@ class RayDogBase():
             task=head_task)
 
         # Get the node details for the head node
-        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(head_task.id)
+        self.head_node_public_ip, self.head_node_private_ip = self.get_ip_addresses(head_task.id)
 
         return True
         
@@ -757,8 +818,8 @@ class RayDogClient(RayDogBase):
             task=head_task)
 
         # Extract the head node's IP addresses
-        self.head_node_private_ip, self.head_node_public_ip = self.get_ip_addresses(head_task.id)
-
+        self.head_node_public_ip, self.head_node_private_ip = self.get_ip_addresses(head_task.id)
+ 
     def create_worker_nodes(self, 
         flavour: str,
         tags: Dict[str, str],
