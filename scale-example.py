@@ -14,6 +14,8 @@ TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
+ENABLE_OBSERVABILITY = False
+
 import logging
 import time
 from datetime import datetime, timedelta
@@ -23,7 +25,7 @@ import dotenv
 import ray
 
 from raydog.raydog import RayDogCluster
-from utils.ray_ssh_tunnels import RayTunnels
+from utils.ray_ssh_tunnels import RayTunnels, basic_port_forward
 
 
 def main():
@@ -39,6 +41,7 @@ def main():
             yd_application_key_id=getenv("YD_API_KEY_ID"),
             yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
+            cluster_tag=f"{MY_USERNAME}-ray-testing",
             cluster_namespace=f"{MY_USERNAME}-ray",
             head_node_compute_requirement_template_id=(
                 "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
@@ -46,8 +49,13 @@ def main():
                 else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
             ),
             head_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
-            cluster_tag=f"{MY_USERNAME}-ray-testing",
             head_node_metrics_enabled=True,
+            enable_observability=ENABLE_OBSERVABILITY,
+            observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
+            observability_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
+            observability_node_metrics_enabled=True,
+            head_node_capture_taskoutput=True,
+            observability_node_capture_taskoutput=True,
         )
 
         # Add the worker pools
@@ -59,6 +67,7 @@ def main():
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id="ami-01d201b7824bcda1c",  # 'ray-test-8gb' AMI eu-west-2
                 worker_node_metrics_enabled=True,
+                worker_node_capture_taskoutput=True,
             )
 
         # Build the Ray cluster
@@ -68,6 +77,25 @@ def main():
         )
         print(f"Ray head node started at public IP address: '{public_ip}'")
 
+        ports = [basic_port_forward(10001), basic_port_forward(8265)]
+
+        if ENABLE_OBSERVABILITY:
+            ports.append(
+                (
+                    "localhost",
+                    3000,
+                    str(raydog_cluster.observability_node_private_ip),
+                    3000,
+                )
+            )
+            ports.append(
+                (
+                    "localhost",
+                    9090,
+                    str(raydog_cluster.observability_node_private_ip),
+                    9090,
+                )
+            )
         # Allow time for the API and Dashboard to start before creating
         # the SSH tunnels
         print("Waiting for Ray services to start...")
@@ -76,6 +104,7 @@ def main():
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
             private_key_file="private-key",
+            ray_ports=ports,
         )
         ssh_tunnels.start_tunnels()
 
@@ -83,7 +112,11 @@ def main():
         print(
             f"Ray head node and SSH tunnels started; using client at: {cluster_address}"
         )
-        print("Ray dashboard is available at: http://localhost:8265")
+        print("Ray dashboard: http://localhost:8265")
+
+        if ENABLE_OBSERVABILITY:
+            print("Grafana:       http://localhost:3000")
+            print("Prometheus:    http://localhost:9090")
 
         input(
             "Wait for worker nodes to join the cluster ... then hit enter to run the sample job: "
@@ -128,7 +161,7 @@ def ray_test_job(cluster_address):
     print(f"Results: {results[:5]} ...")  # Show first 5 results
     print(f"Total duration: {time.time() - start_time} seconds")
 
-    ray.shutdown()
+    ray.shutdown()  # Shut down Ray
 
 
 # Entry point

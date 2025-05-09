@@ -8,6 +8,10 @@ from sshtunnel import SSHTunnelForwarder
 LOCALHOST = "127.0.0.1"
 
 
+def basic_port_forward(port: int) -> tuple[str, int, str, int]:
+    return LOCALHOST, port, LOCALHOST, port
+
+
 class RayTunnels:
     """
     Set up SSH port forwarding for Ray.
@@ -18,7 +22,7 @@ class RayTunnels:
         ray_head_ip_address: str,
         ssh_user: str,
         private_key_file: str,
-        ray_ports: tuple[int, ...] = (10001, 8265),
+        ray_ports: list[tuple[str, int, str, int]] | None = None,
     ):
         """
         Set SSH tunnel parameters.
@@ -32,7 +36,14 @@ class RayTunnels:
         self._ray_ip = ray_head_ip_address
         self._ssh_user = ssh_user
         self._private_key_file = private_key_file
-        self._ray_ports = ray_ports
+        self._ray_ports = (
+            [
+                ("localhost", 10001, "localhost", 10001),
+                ("localhost", 8265, "localhost", 8265),
+            ]
+            if ray_ports is None
+            else ray_ports
+        )
         self._ray_tunnels: list[SSHTunnelForwarder] = []
 
     def start_tunnels(self):
@@ -44,8 +55,8 @@ class RayTunnels:
                 self._ray_ip,
                 ssh_username=self._ssh_user,
                 ssh_pkey=self._private_key_file,
-                remote_bind_address=(LOCALHOST, port),
-                local_bind_address=(LOCALHOST, port),
+                local_bind_address=((port[0], port[1])),
+                remote_bind_address=((port[2], port[3])),
             )
             tunnel.start()
             self._ray_tunnels.append(tunnel)
