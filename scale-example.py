@@ -14,7 +14,7 @@ TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
-ENABLE_OBSERVABILITY = True
+ENABLE_OBSERVABILITY = False
 
 import logging
 import time
