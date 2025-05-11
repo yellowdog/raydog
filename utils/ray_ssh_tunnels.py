@@ -67,7 +67,7 @@ class RayTunnels:
     def basic_port_forward(port: int) -> SSHTunnelSpec:
         """
         Create a basic port-forwarding tunnel specification.
-        
+
         :param port: the port to forward
         :return: An SSHTunnelSpec object
         """

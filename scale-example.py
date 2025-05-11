@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-MY_USERNAME = "pwt"  # Note; Match YD naming rules, lower case, etc.
-
 # Dimensioning the cluster: total workers is the product of the vars below
 # Each compute requirement is split across eu-west-2{a, b, c}
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
@@ -19,6 +17,7 @@ ENABLE_OBSERVABILITY = False
 import logging
 import time
 from datetime import datetime, timedelta
+from getpass import getuser
 from os import getenv, path
 
 import dotenv
@@ -26,6 +25,11 @@ import ray
 
 from raydog.raydog import RayDogCluster
 from utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
+
+try:
+    USERNAME = getuser().replace(" ", "_").lower()
+except:
+    USERNAME = "default"
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
@@ -56,8 +60,8 @@ def main():
             yd_application_key_id=getenv("YD_API_KEY_ID"),
             yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
-            cluster_tag=f"{MY_USERNAME}-ray-testing",
-            cluster_namespace=f"{MY_USERNAME}-ray",
+            cluster_tag=f"{USERNAME}-ray-testing",
+            cluster_namespace=f"{USERNAME}-ray",
             head_node_compute_requirement_template_id=(
                 "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
                 if TOTAL_WORKER_NODES > 1000
