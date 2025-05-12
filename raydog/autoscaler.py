@@ -113,6 +113,7 @@ class RayDogNodeProvider(NodeProvider):
             # Don't have a conenctino to the tag store yet
             self._tunnel = None
             self._remote_tag_server = None
+            self._raydog.head_node_public_ip = None
 
             if self._raydog.find_raydog_cluster():
                 # Get the tags from an existing head node
@@ -159,6 +160,10 @@ class RayDogNodeProvider(NodeProvider):
         """
         logger.debug(f"non_terminated_nodes {tag_filters}")
 
+        # get updated tags, if possible 
+        if (not self._on_head_node) and self._connect_to_tag_server(False):
+            self._read_tags_from_head_node()
+
         candidates = filter(lambda x: not x.terminated, self._tag_store.node_info.values())
 
         ray_tags = self._tag_store.ray_tags
@@ -204,7 +209,7 @@ class RayDogNodeProvider(NodeProvider):
                     self._read_tags_from_head_node()
                     self._need_to_sync_tags = False
                 else:
-                   self._send_tags_to_head_node(tags)
+                    self._send_tags_to_head_node(tags)
 
     def external_ip(self, node_id: str) -> str:
         """Returns the external ip of the given node."""
@@ -315,67 +320,7 @@ class RayDogNodeProvider(NodeProvider):
             )
         return self._cmd_runner
 
-    # def _connect_to_tag_server(self, mustconnect: bool=False):
-    #     """Open a connection to the tag server, via an SSH tunnel"""
-    #     assert not self._on_head_node
-    #     assert self._auth_config
-
-    #     self.tunnel = None
-
-    #     retry = 10
-    #     while retry > 0:
-    #         try:
-    #             # Setup an SSH tunnel to the tag server on the head node
-    #             self._connect_ssh_tunnel()
-
-    #             # Make a connection
-    #             logger.info("Connecting to tag server")
-    #             sock = socket.create_connection(('127.0.0.1', self.tunnel.local_bind_port))
-    #             self._remote_tag_server = sock
-
-    #             # Try a wake-up message
-    #             hello = self._message_to_tag_server('?', '')
-    #             logger.debug(f"Tag server response: {hello}")
-
-    #             # Do we need 
-    #             if self._need_to_sync_tags:
-    #                 self._send_tags_to_head_node(self._tag_store.ray_tags)
-    #                 self._read_tags_from_head_node()
-    #                 self._need_to_sync_tags = False
-
-    #             # If we made this far without an exception, we're connected
-    #             break
-    #         except:
-    #             # Retry if something goes wrong
-    #             logger.info(f"Connection failed. Will retry {retry} more times")
-    #             sleep(15.0)
-    #             retry -= 1    
-
-    # def _connect_ssh_tunnel(self):
-    #     assert not self._on_head_node
-    #     assert self._auth_config
-
-    #     # Skip if tunnel is ok
-    #     if self.tunnel:
-    #         self.tunnel.check_tunnels()
-    #         if self.tunnel.tunnel_is_up:
-    #             return
-
-    #     # Setup an SSH tunnel to the tag server on the head node
-    #     ip = self._raydog.head_node_public_ip
-
-    #     logger.debug(f"Setting up SSH tunnel to tag server on {ip}")
-    #     self.tunnel = SSHTunnelForwarder(
-    #         ip,
-    #         ssh_username=self._auth_config['ssh_user'],
-    #         ssh_pkey=self._auth_config['ssh_private_key'],
-    #         remote_bind_address=('127.0.0.1', TAG_SERVER_PORT)
-    #     )
-    #     self.tunnel.start()
-
-    #     logger.debug(f"SSH tunnel local port {self.tunnel.local_bind_port}")
-
-    def _connect_to_tag_server(self, mustconnect:bool):
+    def _connect_to_tag_server(self, mustconnect:bool = False):
         assert not self._on_head_node
         assert self._auth_config
 
@@ -385,6 +330,10 @@ class RayDogNodeProvider(NodeProvider):
         #     if not self._tunnel.tunnel_is_up:
         #         self._tunnel = None
 
+        if not self._raydog.head_node_public_ip:
+            logger.debug(f"Head node not found/created yet")
+            return False
+        
         if not self._tunnel:
             ip = self._raydog.head_node_public_ip
 

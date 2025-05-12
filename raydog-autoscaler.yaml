@@ -12,22 +12,18 @@ provider:
 
   head_start_ray_script: 
   - "#!/bin/bash -x"
-  - "until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 5; done"
-  - export PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH
+  - "source $HOME/.bashrc"
+  - "until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 2; done"
   - trap "ray stop; echo Ray stopped" EXIT
-  #- set -euo pipefail
-  - VENV=/opt/yellowdog/agent/venv
-  - source $VENV/bin/activate
+  - set -euo pipefail
   - ray stop
   - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
 
   worker_start_ray_script:
   - "#!/bin/bash"
-  - export "PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH"
+  - "source $HOME/.bashrc"
   - trap "ray stop; echo Ray stopped" EXIT
   - set -euo pipefail
-  - VENV=/opt/yellowdog/agent/venv
-  - source $VENV/bin/activate
   - ray stop
   - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
 

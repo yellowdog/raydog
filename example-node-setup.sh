@@ -70,6 +70,10 @@ RAYFILE=$VENV/bin/ray
 cp $RAYFILE $RAYFILE.bak
 awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
 
+echo "Create bashrc to setup the Ray environment"
+echo "export PYTHONPATH=/opt/yellowdog/agent" > $YD_AGENT_HOME/.bashrc
+echo "source $VENV/bin/activate" >> $YD_AGENT_HOME/.bashrc
+
 ################################################################################
 
 echo "Disabling firewall"
