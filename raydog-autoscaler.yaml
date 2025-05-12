@@ -6,17 +6,20 @@ provider:
   lifetime: 30m
   build_timeout: 10m
 
+  foreground_node_launch: True
+
   initialization_script: file:example-node-setup.sh
 
   head_start_ray_script: 
   - "#!/bin/bash -x"
+  - "until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 5; done"
   - export PYTHONPATH=/opt/yellowdog/agent:$PYTHONPATH
   - trap "ray stop; echo Ray stopped" EXIT
   #- set -euo pipefail
   - VENV=/opt/yellowdog/agent/venv
   - source $VENV/bin/activate
   - ray stop
-  - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/raydog-autoscaler.yaml --block
+  - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
 
   worker_start_ray_script:
   - "#!/bin/bash"
