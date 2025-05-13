@@ -5,14 +5,14 @@
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 2
+WORKER_NODES_PER_POOL = 500  # Must be <= 1500, assuming split across 3 AZs
+NUM_WORKER_POOLS = 3
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
-ENABLE_OBSERVABILITY = False
+ENABLE_OBSERVABILITY = True
 
 import logging
 import time
@@ -74,7 +74,11 @@ def main():
             head_node_userdata=USERDATA,
             head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
             enable_observability=ENABLE_OBSERVABILITY,
-            observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
+            observability_node_compute_requirement_template_id=(
+                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+                if TOTAL_WORKER_NODES > 1000
+                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+            ),
             observability_node_images_id=AMI,
             observability_node_metrics_enabled=True,
             observability_node_userdata=USERDATA,
