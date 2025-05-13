@@ -44,7 +44,9 @@ for name, script_path in SCRIPT_PATHS.items():
     with open(path.join(CURRENT_DIR, script_path), "r") as file:
         DEFAULT_SCRIPTS[name] = file.read()
 
-USERDATA = DEFAULT_SCRIPTS["node-setup-userdata"] if ENABLE_OBSERVABILITY else None
+# Node boot setup
+AMI = "ami-0c6175878f7e01e70"  # ray-246-observability-docker-8GB, eu-west-2
+USERDATA = None
 
 
 def main():
@@ -67,13 +69,13 @@ def main():
                 if TOTAL_WORKER_NODES > 1000
                 else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
             ),
-            head_node_images_id="ami-04f57844804362ae0",  # 'ray-2-46-pwt' 8GB AMI eu-west-2
+            head_node_images_id=AMI,
             head_node_metrics_enabled=True,
             head_node_userdata=USERDATA,
             head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
             enable_observability=ENABLE_OBSERVABILITY,
             observability_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead",
-            observability_node_images_id="ami-04f57844804362ae0",  # 'ray-2-46-pwt' 8GB AMI eu-west-2
+            observability_node_images_id=AMI,
             observability_node_metrics_enabled=True,
             observability_node_userdata=USERDATA,
             head_node_capture_taskoutput=True,
@@ -90,7 +92,7 @@ def main():
                     "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
                 ),
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
-                worker_node_images_id="ami-04f57844804362ae0",  # 'ray-2-46-pwt' 8GB AMI eu-west-2
+                worker_node_images_id=AMI,
                 worker_node_metrics_enabled=True,
                 worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
                 worker_node_userdata=USERDATA,
