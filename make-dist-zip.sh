@@ -15,7 +15,7 @@ mkdir -p "$DIST/$RAYDOG"
 echo "Commit ID: $COMMIT" > "$DIST/$RAYDOG/$VERSION_FILE"
 git log --oneline > "$DIST/$RAYDOG/$CHANGELOG_FILE"
 
-rm -rf raydog/__pycache__
+rm -rf raydog/__pycache__ utils/__pycache__
 
 for ITEM in README.md \
             usage-example.py \
