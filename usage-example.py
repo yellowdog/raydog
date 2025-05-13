@@ -29,6 +29,8 @@ for name, script_path in SCRIPT_PATHS.items():
     with open(path.join(CURRENT_DIR, script_path), "r") as file:
         DEFAULT_SCRIPTS[name] = file.read()
 
+IMAGES_ID = "ami-0fef583e486727263"  # Ubuntu 22.04, AMD64, eu-west-2
+
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
@@ -51,7 +53,7 @@ def main():
                 if TOTAL_WORKER_NODES > 1000
                 else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
             ),
-            head_node_images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
+            head_node_images_id=IMAGES_ID,
             cluster_tag="my-ray-tag",
             cluster_lifetime=timedelta(seconds=600),
             head_node_metrics_enabled=True,
@@ -64,7 +66,7 @@ def main():
             raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
                 worker_pool_node_count=NODES_PER_WORKER_POOL,
-                worker_node_images_id="ami-0fef583e486727263",  # Ubuntu 22.04, AMD64, eu-west-2
+                worker_node_images_id=IMAGES_ID,
                 worker_node_metrics_enabled=True,
                 worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
                 worker_node_userdata=DEFAULT_SCRIPTS["node-setup-userdata"],
