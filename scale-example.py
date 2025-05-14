@@ -5,14 +5,14 @@
 # Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
 #       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 500  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 3
+WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
+NUM_WORKER_POOLS = 2
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
 TASK_SLEEP_TIME_SECONDS = 10
 
-ENABLE_OBSERVABILITY = True
+ENABLE_OBSERVABILITY = False
 
 import logging
 import time
