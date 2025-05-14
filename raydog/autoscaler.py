@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import redis
 import socket
 import socketserver
 import struct
@@ -23,6 +24,7 @@ from yellowdog_client.common import SearchClient
 from yellowdog_client.model import (
     ApiKey,
     AutoShutdown,
+    ComputeRequirement,
     ComputeRequirementTemplateUsage,
     Node,
     NodeWorkerTarget,
@@ -81,6 +83,7 @@ class RayDogNodeProvider(NodeProvider):
  
         # Initialise various instance variables
         self._tag_store = TagStore()
+        self._redis: redis = None
         self._cmd_runner = None
         self._scripts = {}
 
@@ -95,12 +98,11 @@ class RayDogNodeProvider(NodeProvider):
 
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
-            # Get the tag server running
-            self._tag_server = TagServer(self._tag_store, TAG_SERVER_PORT)
+            # Connect to the redis tag store
+            self._connect_to_redis(TAG_SERVER_PORT)
 
             # Running on the head node
             self._raydog = RayDogHead(provider_config, cluster_name, self._tag_store)
-            self._need_to_sync_tags = False
 
             # Make sure that YellowDog knows about this cluster
             if not self._raydog.find_raydog_cluster():
@@ -111,14 +113,14 @@ class RayDogNodeProvider(NodeProvider):
             self._raydog = RayDogClient(provider_config, cluster_name, self._tag_store)
 
             # Don't have a conenctino to the tag store yet
-            self._tunnel = None
-            self._remote_tag_server = None
             self._raydog.head_node_public_ip = None
-
+            self._redis = None
+ 
             if self._raydog.find_raydog_cluster():
                 # Get the tags from an existing head node
                 logger.debug(f"Found an existimg head node")
-                self._need_to_sync_tags = True
+                self._tunnel_to_redis()
+                self._read_tags_from_server()
             else:
                 # Ray will create a new head node ... later
                 pass
@@ -161,8 +163,7 @@ class RayDogNodeProvider(NodeProvider):
         logger.debug(f"non_terminated_nodes {tag_filters}")
 
         # get updated tags, if possible 
-        if (not self._on_head_node) and self._connect_to_tag_server(False):
-            self._read_tags_from_head_node()
+        self._read_tags_from_server()
 
         candidates = filter(lambda x: not x.terminated, self._tag_store.node_info.values())
 
@@ -196,20 +197,8 @@ class RayDogNodeProvider(NodeProvider):
             raise Exception(f"Unknown node id {node_id}")
 
         info = { node_id : tags }
-        self._tag_store.update_ray_tags(info)
-
-        if not self._on_head_node:
-            # the last thing ray up does on the client is set the head node status  
-            # the tags needs to be sync-ed before ray up exits
-            lastchance = tags.get('ray-node-status') == 'up-to-date'
-
-            if self._connect_to_tag_server(lastchance):
-                if self._need_to_sync_tags:
-                    self._send_tags_to_head_node(self._tag_store.ray_tags)
-                    self._read_tags_from_head_node()
-                    self._need_to_sync_tags = False
-                else:
-                    self._send_tags_to_head_node(tags)
+        self._tag_store.ray_tags.update(info)
+        self._send_tags_to_server(info)
 
     def external_ip(self, node_id: str) -> str:
         """Returns the external ip of the given node."""
@@ -226,18 +215,27 @@ class RayDogNodeProvider(NodeProvider):
     ) -> Optional[Dict[str, Any]]:
         """Creates a number of nodes within the namespace."""
         logger.info(f"create_node {node_config} {tags} {count}")
+        node_type = tags['ray-node-type']
 
+        # Make sure that Valkey gets installed on the head node
+        node_init_script = self._get_script('initialization_script')
+        if node_type == 'head':
+            node_init_script += r"""
+VALKEY_VERSION=8.1.1
+curl -O  https://download.valkey.io/releases/valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz
+tar -xf valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz  -C $YD_AGENT_HOME 
+chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
+"""
         # Tell YellowDog to start creating instances 
         flavour = tags['ray-user-node-type'].lower()
         self._raydog.provision_instances(
             flavour=flavour,
             node_config=node_config, 
             count=count, 
-            userdata=self._get_script('initialization_script'), 
+            userdata=node_init_script, 
             metrics_enabled= True) 
 
         # Start the required tasks
-        node_type = tags['ray-node-type']
         if node_type == 'head':
             # Create a head node
             self._raydog.create_head_node(
@@ -246,8 +244,10 @@ class RayDogNodeProvider(NodeProvider):
                 ray_start_script=self._get_script('head_start_ray_script')
             )
 
-            # Sync tag values with the head node, when we can
-            self._need_to_sync_tags = True
+            # Sync tag values with the head node
+            self._tunnel_to_redis()
+            self._send_tags_to_server(self._tag_store.ray_tags)
+            self._read_tags_from_server()
         else:
             # Create worker nodes
             self._raydog.create_worker_nodes(
@@ -276,7 +276,6 @@ class RayDogNodeProvider(NodeProvider):
 
         return self.create_node(node_config, tags, count)
 
-
     def terminate_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Terminates the specified node."""
         logger.debug(f"terminate_node {node_id}")
@@ -304,7 +303,6 @@ class RayDogNodeProvider(NodeProvider):
         cluster_config["provider"]["auth"] = cluster_config["auth"].copy()
         return cluster_config
 
-
     def _get_head_node_command_runner(self) -> CommandRunnerInterface :
         """Create a CommandRunner object for the head node"""
         assert self._auth_config
@@ -320,83 +318,54 @@ class RayDogNodeProvider(NodeProvider):
             )
         return self._cmd_runner
 
-    def _connect_to_tag_server(self, mustconnect:bool = False):
+    def _connect_to_redis(self, port):
+        """Make a local connection to the redis tag server"""
+        self._redis = redis.Redis(host='localhost', port=port, decode_responses=True)
+
+    def _tunnel_to_redis (self):
+        """Setup an SSH tunnel and connect to the redis tag server on the head node"""
         assert not self._on_head_node
         assert self._auth_config
-
-        # Setup an SSH tunnel to the tag server on the head node
-        # if self._tunnel:
-        #     self._tunnel.check_tunnels()
-        #     if not self._tunnel.tunnel_is_up:
-        #         self._tunnel = None
-
-        if not self._raydog.head_node_public_ip:
-            logger.debug(f"Head node not found/created yet")
-            return False
         
-        if not self._tunnel:
-            ip = self._raydog.head_node_public_ip
+        ip = self._raydog.head_node_public_ip
+        if not ip:
+            raise Exception(f"Head node not found/created yet")
 
-            logger.debug(f"Setting up SSH tunnel to tag server on {ip}")
-            self._tunnel = SSHTunnelForwarder(
-                ip,
-                ssh_username=self._auth_config['ssh_user'],
-                ssh_pkey=self._auth_config['ssh_private_key'],
-                remote_bind_address=('127.0.0.1', TAG_SERVER_PORT)
-            )
-            self._tunnel.start()
-
-            logger.debug(f"SSH tunnel local port {self._tunnel.local_bind_port}")
+        logger.debug(f"Setting up SSH tunnel to tag server on {ip}")
+        tunnel = SSHTunnelForwarder(
+            ip,
+            ssh_username=self._auth_config['ssh_user'],
+            ssh_pkey=self._auth_config['ssh_private_key'],
+            remote_bind_address=('127.0.0.1', TAG_SERVER_PORT)
+        )
+        tunnel.start()
+        logger.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
     
-        # Connect to the tag server
-        if self._remote_tag_server:
-            return True
-        else:
-            retry = 10
-            while retry > 0:
-                try:
-                    logger.info("Connecting to tag server")
-                    sock = socket.create_connection(('127.0.0.1', self._tunnel.local_bind_port))
-                    self._remote_tag_server = sock
-
-                    # Try a wake-up message
-                    hello = self._message_to_tag_server('?', '')
-                    logger.debug(f"Tag server response: {hello}")
-
-                    # If we made it this far without an exception, we're connected
-                    return True
-                except:
-                    # Retry if something goes wrong
-                    self._remote_tag_server = None
-                    if mustconnect:
-                        retry -= 1
-                        logger.info(f"Connection failed. Will retry {retry} more times")
-                        sleep(15.0)
-                    else:
-                        logger.info(f"Connection failed. Try again later")
-                        break
-
-        return False
-
-    def _message_to_tag_server(self, operation: str, data_in: str) -> str:
-        assert not self._on_head_node 
-
-        TagProtocol.send_message(self._remote_tag_server, operation, data_in)
-        reply, data_out = TagProtocol.receive_message(self._remote_tag_server)
-        assert reply == '!'
-        return data_out
-
-    def _read_tags_from_head_node(self) -> None:
+        self._connect_to_redis(tunnel.local_bind_port)
+    
+    def _read_tags_from_server(self) -> None:
         """Read tags from the head node"""
-        data = self._message_to_tag_server('G', '')
- 
-        newtags = json.loads(data)
-        logger.debug(f"Tags received from head node {newtags}")
-        self._tag_store.ray_tags.update(newtags)
+        if self._redis:
+            prefix = f"{self.cluster_name}:"
 
-    def _send_tags_to_head_node(self, thetags: Dict[str, Dict]) -> None:
+            cur, redis_keys = self._redis.scan(cursor=0, match=prefix+'*')
+            while True:
+                for key in redis_keys:
+                    node_id = key.removeprefix(prefix)
+                    tags = self._redis.hgetall(key)
+
+                    logger.debug(f"Tags from head node {node_id} {tags}")
+                    self._tag_store.update_ray_tags(node_id, tags)
+
+                if not cur:
+                    break
+                cur, redis_keys = self._redis.scan(cursor=cur, match=prefix+'*')
+
+    def _send_tags_to_server(self, thetags: Dict[str, Dict]) -> None:
         """Upload tag data to the head node"""
-        self._message_to_tag_server('U', json.dumps(thetags))
+        if self._redis:
+            for node_id, node_tags in thetags.items():
+                self._redis.hset(f"{self.cluster_name}:{node_id}", mapping=node_tags)
 
     @staticmethod
     def _read_file(filename):
@@ -427,13 +396,11 @@ class RayDogNodeProvider(NodeProvider):
 
 
 class TagStore():
-    """manage the list of information about nodes and the related YellowDog tasks"""
+    """Manage the list of information about nodes and the related YellowDog tasks"""
 
     def __init__(self):
         self.node_info: Dict[str, NodeInfo] = {}
         self.ray_tags: Dict[str, str] = {}
-
-        self.writelock = threading.Lock()
 
     # NB: the node_id parameter for all these functions is really a Yellowdog task id
     def get_node_info(self, node_id:str) -> NodeInfo:
@@ -459,109 +426,12 @@ class TagStore():
             del self.node_info[node_id]
             del self.ray_tags[node_id]
 
-    def update_ray_tags(self, newtags: Dict) -> None:
-        for node_id, node_tags in newtags.items():
-            self.writelock.acquire()
-            if node_id in self.ray_tags:
-                self.ray_tags[node_id].update(node_tags)
-            else:
-                self.ray_tags[node_id] = node_tags.copy()
-            self.writelock.release()
-
-#----------------------------------------------------------------------------------------
-# Simple TCP server to share tags stored on the head node
-
-class TagProtocol:
-    """ Class to encapsulate the details of the custom low-level comms protocol for 
-        sharing tags.
-
-        All messages start with a 1 digit opcode, followed by an 8 digit ASCII string 
-        giving the length of the data and then the actual data, as bytes.
-
-        If there is no data to send, messages are shortened to the opcode plus ';'
-    """
-
-    @staticmethod
-    def _recv_bytes(sock: socket.socket, n: int) -> bytes:
-        thebytes = bytearray()
-        while n > 0:
-            newdata = sock.recv(n)
-            thebytes.extend(newdata)
-            n -= len(newdata)
-        return thebytes
-
-    @staticmethod
-    def send_message(sock: socket.socket, opcode: str, content: str) -> None:
-        #logger.debug(f"tx opcode:{opcode} content:{content}")
-        message = bytes(opcode, 'ascii')
-        if content:
-            extra_data = bytes(content, 'utf8')
-            extra_len = len(extra_data)
-
-            length_field = bytes(str(extra_len).zfill(8), 'ascii')
-            message += length_field + extra_data
+    def update_ray_tags(self, node_id:str, new_tags:Dict):
+        if node_id in self.ray_tags:
+            self.ray_tags[node_id].update(new_tags)
         else:
-            message += b';'
+            self.ray_tags[node_id] = new_tags.copy()
 
-        sock.sendall(message)
-
-    @staticmethod
-    def receive_message(sock: socket.socket) -> tuple[str, str]:
-        first2 = TagProtocol._recv_bytes(sock, 2)
-        opcode = chr(first2[0])
-        if first2[1] in [ ord(';'),  ord('\n') ]:
-            content = '' 
-        else:
-            next7 = TagProtocol._recv_bytes(sock, 7)
-            extra_len = int(first2[1:2] + next7)
-            extra_data = TagProtocol._recv_bytes(sock, extra_len)
-            content = str(extra_data, 'utf8')
-
-        #logger.debug(f"rx opcode:{opcode} content:{content}")
-        return opcode, content
-  
-class TagRequestHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        try:
-            while True:
-                opcode, content = TagProtocol.receive_message(self.request)
-
-                response = ''
-                if opcode == 'G':
-                    # Get all the tags
-                    response = json.dumps(self.server.tagstore.ray_tags)
-                elif opcode == 'U':
-                    # Update tags
-                    newtags = json.loads(content)
-                    self.server.tagstore.update_ray_tags(newtags)
-                elif opcode == '?':
-                    response = 'RayDog Tag Server'
-
-                # Acknowledge with a !
-                TagProtocol.send_message(self.request, '!', response)
-        except Exception as e: 
-            logger.error(f"Tag server failed\n{repr(e)}")
-            return
-
-class TagServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    def __init__(self, tagstore: TagStore, port: int):
-        self.tagstore: TagStore = tagstore
-        
-        super().__init__(("127.0.0.1", port), TagRequestHandler)
-
-        # Start a thread with the server, which will start another thread for each request
-        self.server_thread = threading.Thread(target=self._run_server)
-        
-        # Exit the server thread when the main thread terminates
-        self.server_thread.daemon = True
-        self.server_thread.start()
-
-    def _run_server(self):
-        ip, port = self.server_address
-
-        logger.debug(f"{datetime.now()} Tag server starting on {ip}:{port}")
-        self.serve_forever()
-        logger.debug(f"Tag server stopped")
 
 #----------------------------------------------------------------------------------------
 # Connect to YellowDog and use it to setup clusters
@@ -603,13 +473,19 @@ class RayDogBase():
         compute_requirement_template_id = node_config['compute_requirement_template']
         images_id = node_config['images_id']
 
+        worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
+
         #TODO: handle the on-prem case
         if flavour in self._worker_pools:
-            pass
-            #TODO: enlarge the worker pool, if needed
-        else:
-            worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
+            # Add more instances to the compute requirement
+            compute_req: ComputeRequirement = self.yd_client.compute_client.get_compute_requirement_by_name(
+                self._namespace, worker_pool_name)
+            
+            compute_req.targetInstanceCount += count
 
+            self.yd_client.compute_client.update_compute_requirement(compute_req)
+        else:
+            # Create a new worker pool for this node type
             compute_requirement_template_usage = ComputeRequirementTemplateUsage(
                 templateId=compute_requirement_template_id,
                 requirementName=worker_pool_name,
@@ -893,16 +769,12 @@ class RayDogHead(RayDogBase):
         # Get the latest state of the work requirement from YellowDog
         work_requirement: WorkRequirement = self.yd_client.work_client.get_work_requirement_by_id(self._work_requirement_id)
 
-        #logger.debug(f"work_requirement {work_requirement}")
-
         # Look for a task group for this node flavour
         task_group: TaskGroup = None
         for tg in work_requirement.taskGroups:
             if tg.tag == flavour:
                 task_group = tg
                 break
-
-        #logger.debug(f"task_group {task_group}")
 
         # If there isn't one, create it
         if not task_group:
@@ -924,8 +796,6 @@ class RayDogHead(RayDogBase):
 
             work_requirement = self.yd_client.work_client.update_work_requirement(work_requirement)
             task_group = work_requirement.taskGroups[index]
-            #logger.debug(f"work_requirement2 {work_requirement}")
-            #logger.debug(f"task_group2 {task_group}")
 
         # Add tasks to create worker nodes
         worker_node_task = Task(
@@ -936,14 +806,12 @@ class RayDogHead(RayDogBase):
                 "RAY_HEAD_IP" : self.head_node_private_ip
             },
         )
-        #logger.debug(f"worker_node_task {worker_node_task}")
 
         newtasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group.id,
             [ worker_node_task for _ in range(count) ],
         )
 
-        #logger.debug(f"newtasks {newtasks}")
         # Store the Ray tags and task info
         for newtask in newtasks:
             self._tag_store.new_node_info(newtask.id, tags, newtask)

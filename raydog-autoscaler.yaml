@@ -13,6 +13,7 @@ provider:
   head_start_ray_script: 
   - "#!/bin/bash -x"
   - "source $HOME/.bashrc"
+  - "$HOME/valkey*/bin/valkey-server --port 16667 &"
   - "until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 2; done"
   - trap "ray stop; echo Ray stopped" EXIT
   - set -euo pipefail
@@ -41,8 +42,8 @@ available_node_types:
 
   ray_worker_small:
     resources: { "CPU": 2 }
-    min_workers: 1
-    max_workers: 2    
+    min_workers: 0
+    max_workers: 20    
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-split-ondemand           
       images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c
@@ -59,7 +60,7 @@ auth:
 
 # The maximum number of workers nodes to launch in addition to the head
 # node.
-max_workers: 2
+max_workers: 10
 
 # The autoscaler will scale up the cluster faster with higher upscaling speed.
 # E.g., if the task requires adding more nodes then autoscaler will gradually

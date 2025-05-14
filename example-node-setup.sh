@@ -54,7 +54,7 @@ VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
 echo "Installing Ray"
-uv pip install ray[client] sshtunnel yellowdog-sdk
+uv pip install ray[client] sshtunnel yellowdog-sdk redis
 
 ################################################################################
 
