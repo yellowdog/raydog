@@ -2,6 +2,6 @@
 
 GDRIVE="$HOME/My Drive/raydog"
 
-tar -czf raydog.tgz raydog/autoscaler.py example-node-setup.sh
+tar -czf raydog.tgz raydog/autoscaler.py
 cp raydog.tgz "$GDRIVE"
 
