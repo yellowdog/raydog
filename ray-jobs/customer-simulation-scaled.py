@@ -7,7 +7,7 @@ import ray
 
 # Scale the workload
 TASK_COUNT_SCALING_FACTOR = 100  # Factor by which to reduce the number of tasks
-TASK_DURATION_REDUCTION_FACTOR = 10000  # Factor by which to reduce the task duration
+TASK_DURATION_REDUCTION_FACTOR = 10000  # Factor by which to reduce the task durations
 TASK_NUM_CPUS = 1  # Set the required CPU count per task
 
 
@@ -21,17 +21,27 @@ def scaled_count(task_count: int) -> int:
 
 def create_array_with_mean_max(mean_value, max_value, size):
     # Size must be >= 20
-    # Choose a random number of elements to be max_value
-    n_max = np.random.randint(1, size // 10)  # Ensure at least 1 but not more than 10%.
 
-    # Generate random numbers between 0 and 1 for the remaining elements
-    random_numbers = np.random.rand(size - n_max)
+    while True:  # Loop ensures that 'mean_value * size - n_max * max_value' is > 0
 
-    # Calculate the target sum for the remaining elements
-    # The sum of all elements should be: mean * size
-    # Since n_max elements are fixed as max_value, the sum of the remaining
-    # elements should be: mean * size - n_max * max_value
-    target_sum = mean_value * size - n_max * max_value
+        # Choose a random number of elements to be max_value
+        n_max = np.random.randint(
+            1, size // 10
+        )  # Ensure at least 1 but not more than 10%.
+
+        # Generate random numbers between 0 and 1 for the remaining elements
+        random_numbers = np.random.rand(size - n_max)
+
+        # Calculate the target sum for the remaining elements
+        # The sum of all elements should be: mean * size
+        # Since n_max elements are fixed as max_value, the sum of the remaining
+        # elements should be: mean * size - n_max * max_value
+        target_sum = mean_value * size - n_max * max_value
+
+        if target_sum > 0:
+            break
+
+        size += 20  # Bump the size and try again
 
     # Scale the random numbers to match the target sum
     current_sum = np.sum(random_numbers)
@@ -48,10 +58,7 @@ def create_array_with_mean_max(mean_value, max_value, size):
 
 @ray.remote(num_cpus=TASK_NUM_CPUS)
 def task(minutes):
-    try:
-        time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
-    except:
-        time.sleep(0.1)
+    time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
 
 
 def run_group_a1():
