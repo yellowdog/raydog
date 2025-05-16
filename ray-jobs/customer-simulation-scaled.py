@@ -5,11 +5,22 @@ import time
 import numpy as np
 import ray
 
-# Connect to the Ray cluster
-ray.init(address=f"ray://localhost:10001")
+# Scale the workload
+TASK_COUNT_SCALING_FACTOR = 100  # Factor by which to reduce the number of tasks
+TASK_DURATION_REDUCTION_FACTOR = 10000  # Factor by which to reduce the task duration
+TASK_NUM_CPUS = 1  # Set the required CPU count per task
+
+
+def scaled_count(task_count: int) -> int:
+    """
+    Reduce the number of tasks by a scaling factor.
+    """
+    # Minimum
+    return max(20, task_count // TASK_COUNT_SCALING_FACTOR)
 
 
 def create_array_with_mean_max(mean_value, max_value, size):
+    # Size must be >= 20
     # Choose a random number of elements to be max_value
     n_max = np.random.randint(1, size // 10)  # Ensure at least 1 but not more than 10%.
 
@@ -18,7 +29,8 @@ def create_array_with_mean_max(mean_value, max_value, size):
 
     # Calculate the target sum for the remaining elements
     # The sum of all elements should be: mean * size
-    # Since n_max elements are fixed as max_value, the sum of the remaining elements should be: mean * size - n_max * max_value
+    # Since n_max elements are fixed as max_value, the sum of the remaining
+    # elements should be: mean * size - n_max * max_value
     target_sum = mean_value * size - n_max * max_value
 
     # Scale the random numbers to match the target sum
@@ -34,53 +46,84 @@ def create_array_with_mean_max(mean_value, max_value, size):
     return final_array
 
 
-@ray.remote(num_cpus=1)
-def task(minutes):
-    # time.sleep(
-    #     minutes / 10 if minutes > 10 else 1
-    # )  # Use seconds instead of minutes, divided by 10, minimum of 1s
-    time.sleep(0.1)
+@ray.remote(num_cpus=TASK_NUM_CPUS)
+def task(minutes: float):
+    try:
+        time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
+    except:
+        time.sleep(0.1)
 
 
 def run_group_a1():
-    return [task.remote(m) for m in create_array_with_mean_max(10.2, 30, 20)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(10.2, 30, scaled_count(45200))
+    ]
 
 
 def run_group_a2():
-    return [task.remote(m) for m in create_array_with_mean_max(0.72, 10, 30)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(0.72, 10, scaled_count(14000))
+    ]
 
 
 def run_group_a3():
-    return [task.remote(m) for m in create_array_with_mean_max(0.67, 2, 25)]
+    return [
+        task.remote(m) for m in create_array_with_mean_max(0.67, 2, scaled_count(1080))
+    ]
 
 
 def run_group_b1():
-    return [task.remote(m) for m in create_array_with_mean_max(17.2, 60, 22)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(17.2, 60, scaled_count(30100))
+    ]
 
 
 def run_group_b2():
-    return [task.remote(m) for m in create_array_with_mean_max(0.74, 20, 21)]
+    return [
+        task.remote(m) for m in create_array_with_mean_max(0.74, 20, scaled_count(4680))
+    ]
 
 
 def run_group_c():
-    return [task.remote(m) for m in create_array_with_mean_max(1.08, 30, 24)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(1.08, 30, scaled_count(31700))
+    ]
 
 
 def run_group_e():
-    return [task.remote(m) for m in create_array_with_mean_max(3.59, 360, 28)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(3.59, 360, scaled_count(9360))
+    ]
 
 
 def run_group_f():
-    return [task.remote(m) for m in create_array_with_mean_max(3.08, 120, 29)]
+    return [
+        task.remote(m)
+        for m in create_array_with_mean_max(3.08, 120, scaled_count(4680))
+    ]
 
 
 def run_group_g():
-    return [task.remote(m) for m in create_array_with_mean_max(0.5, 5, 23)]
+    return [
+        task.remote(m) for m in create_array_with_mean_max(0.5, 5, scaled_count(4140))
+    ]
 
 
 def run_group_h():
-    return [task.remote(m) for m in create_array_with_mean_max(3.14, 45, 27)]
+    return [
+        task.remote(m) for m in create_array_with_mean_max(3.14, 45, scaled_count(1610))
+    ]
 
+
+# Connect to the Ray cluster
+ray.init(address=f"ray://localhost:10001")
+
+print("Task group dependencies: {a1, b1, c, e, f, g, h}; a1 -> a2 -> a3 | b1 -> b2")
 
 all_tasks = []
 a1_tasks = set(run_group_a1())
@@ -102,7 +145,11 @@ print(f"a1, b1, c, e, f, g, h task groups added ({total_tasks} tasks)")
 try:
     while all_tasks:
         ready_tasks, all_tasks = ray.wait(all_tasks, num_returns=1)
-        # print(f"Ready task: {ready_tasks[0]}")
+
+        # print(
+        #     f"Ready task: {ready_tasks[0]} | len_ready_tasks = {len(ready_tasks)} |"
+        #     f" len_all_tasks = {len(all_tasks)}"
+        # )
 
         if ready_tasks[0] in a1_tasks:
             a1_tasks.remove(ready_tasks[0])

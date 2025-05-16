@@ -6,7 +6,7 @@
 #       should be 1,500 (500 instances per AZ)
 
 WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 2
+NUM_WORKER_POOLS = 1
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
@@ -93,7 +93,7 @@ def main():
         for _ in range(NUM_WORKER_POOLS):
             raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id=(
-                    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
+                    "yd-demo/yd-demo-aws-eu-west-2-split-spot-rayworker"
                 ),
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id=AMI,
