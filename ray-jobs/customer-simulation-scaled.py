@@ -15,7 +15,7 @@ def scaled_count(task_count: int) -> int:
     """
     Reduce the number of tasks by a scaling factor.
     """
-    # Minimum
+    # Minimum task count is 20
     return max(20, task_count // TASK_COUNT_SCALING_FACTOR)
 
 
@@ -47,7 +47,7 @@ def create_array_with_mean_max(mean_value, max_value, size):
 
 
 @ray.remote(num_cpus=TASK_NUM_CPUS)
-def task(minutes: float):
+def task(minutes):
     try:
         time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
     except:
