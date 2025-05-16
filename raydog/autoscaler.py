@@ -128,12 +128,6 @@ class RayDogNodeProvider(NodeProvider):
                 return arg.split('=')[1]
         return None
 
-    def __del__(self):
-        """Shutdown the cluster"""
-        logger.debug("RayDogNodeProvider destructor")
-        # if self._raydog:
-        #     self._raydog.shut_down()
-
     def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
         """Return a list of node ids filtered by the specified tags dict.
 
@@ -198,7 +192,7 @@ class RayDogNodeProvider(NodeProvider):
         ip = self._tag_store.get_tag(node_id, "publicip")
         if ip:
             return ip        
-        publicip, privateip = self._get_ip_addresses(node_id)
+        publicip, _ = self._get_ip_addresses(node_id)
         return publicip
     
     def internal_ip(self, node_id: str) -> str:
@@ -207,7 +201,7 @@ class RayDogNodeProvider(NodeProvider):
         ip = self._tag_store.get_tag(node_id, "privateip")
         if ip:
             return ip        
-        publicip, privateip = self._get_ip_addresses(node_id)
+        _, privateip = self._get_ip_addresses(node_id)
         return privateip
 
     def create_node(
@@ -217,23 +211,28 @@ class RayDogNodeProvider(NodeProvider):
         logger.info(f"create_node {node_config} {tags} {count}")
         node_type = tags['ray-node-type']
 
-        # Make sure that Valkey gets installed on the head node
-        node_init_script = self._get_script('initialization_script')
-        if node_type == 'head':
-            node_init_script += r"""
+        flavour = tags['ray-user-node-type'].lower()
+
+        # Check that YellowDog knows how to create instances of this type
+        #TODO: handle the on-prem case
+        if not self._raydog.has_worker_pool(flavour):
+            node_init_script = self._get_script('initialization_script')
+
+            # Valkey must be installed on the head node
+            if node_type == 'head':
+                node_init_script += r"""
 VALKEY_VERSION=8.1.1
 curl -O  https://download.valkey.io/releases/valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz
 tar -xf valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz  -C $YD_AGENT_HOME 
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 """
-        # Tell YellowDog to start creating instances 
-        flavour = tags['ray-user-node-type'].lower()
-        self._raydog.provision_instances(
-            flavour=flavour,
-            node_config=node_config, 
-            count=count, 
-            userdata=node_init_script, 
-            metrics_enabled= True) 
+            # Create the YellowDog worker pool
+            self._raydog.create_worker_pool(
+                flavour=flavour,
+                node_config=node_config, 
+                count=count, 
+                userdata=node_init_script, 
+                metrics_enabled= True) 
 
         # Start the required tasks
         if node_type == 'head':
@@ -312,8 +311,14 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
     def terminate_nodes(self, node_ids: List[str]) -> Optional[Dict[str, Any]]:
         """Terminates a set of nodes."""
         logger.debug(f"terminate_nodes {node_ids}")
-        for node_id in node_ids:
-            self.terminate_node(node_id)
+        if self._raydog.head_node_id in node_ids:
+            # if the head node is being terminated, just shut down the cluster
+            self._raydog.shut_down()
+            for node_id in node_ids:
+                self._tag_store.update_tags(node_id, { "terminated" : "true" })
+        else:    
+            for node_id in node_ids:
+                self.terminate_node(node_id)
         return None
 
     def prepare_for_head_node(self, cluster_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -337,7 +342,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         if not self._cmd_runner:
             self._cmd_runner = self.get_command_runner(
                 "Head Node",
-                self._raydog.head_node_task_id,
+                self._raydog.head_node_id,
                 self._auth_config,
                 self.cluster_name,
                 subprocess,
@@ -346,12 +351,12 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         return self._cmd_runner
 
     @staticmethod
-    def _read_file(filename):
+    def _read_file(filename: str) -> str:
         """Read the contents of a file"""
         with open(filename) as f:
             return f.read()
 
-    def _get_script(self, config_name: str):
+    def _get_script(self, config_name: str) -> str:
         """Either read a script from a file or create it from a list of lines"""
 
         script = self._scripts.get(config_name)
@@ -412,7 +417,7 @@ class TagStore():
         else:
             return None
 
-    def connect(self, remote_server: str, port: int, auth_config:Dict=None) -> None:
+    def connect(self, remote_server: str, port: int, auth_config:Dict[str, str]= None) -> None:
         """Connect to the redis tag server on the head node"""
 
         # setup an SSH tunnel, if required
@@ -471,8 +476,7 @@ class TagStore():
 
 class AutoRayDog():
     def __init__(self, provider_config: Dict[str, Any], cluster_name: str, tag_store:TagStore):
-        logger = logging.getLogger(__name__)
-        logger.setLevel(logging.DEBUG)
+        self._is_shut_down = False
 
         self._namespace = provider_config['namespace']
         self._cluster_name = cluster_name
@@ -493,60 +497,53 @@ class AutoRayDog():
         # Connect to YellowDog
         self._connect_to_yellowdog_api() 
 
-    def provision_instances(self,
+    def has_worker_pool(self, flavour:str) -> bool:
+        """Is there a worker pool for this type of node?"""
+        return flavour in self._worker_pools
+    
+    def create_worker_pool(self,
         flavour: str,
         node_config: Dict[str, Any], 
         count: int, 
         userdata:str, 
         metrics_enabled:bool = True) -> None:
-        """Make sure there is a worker pool for this type of node"""
+        """Create a new worker pool for this type of node"""
 
-        logger.debug(f"provision_instances {flavour}")
-
+        logger.debug(f"create_worker_pool {flavour}")
+ 
         compute_requirement_template_id = node_config['compute_requirement_template']
         images_id = node_config['images_id']
 
         worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
 
-        #TODO: handle the on-prem case
-        if flavour in self._worker_pools:
-            # Add more instances to the compute requirement
-            compute_req: ComputeRequirement = self.yd_client.compute_client.get_compute_requirement_by_name(
-                self._namespace, worker_pool_name)
-            
-            compute_req.targetInstanceCount += count
+        compute_requirement_template_usage = ComputeRequirementTemplateUsage(
+            templateId=compute_requirement_template_id,
+            requirementName=worker_pool_name,
+            requirementNamespace=self._namespace,
+            requirementTag=self._cluster_tag,
+            targetInstanceCount=count,
+            imagesId=images_id,
+            userData=userdata,
+            instanceTags=None)
 
-            self.yd_client.compute_client.update_compute_requirement(compute_req)
-        else:
-            # Create a new worker pool for this node type
-            compute_requirement_template_usage = ComputeRequirementTemplateUsage(
-                templateId=compute_requirement_template_id,
-                requirementName=worker_pool_name,
-                requirementNamespace=self._namespace,
-                requirementTag=self._cluster_tag,
-                targetInstanceCount=count,
-                imagesId=images_id,
-                userData=userdata,
-                instanceTags=None)
+        auto_shut_down = AutoShutdown(
+            enabled=True,
+            timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES))
+        
+        provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
+            createNodeWorkers=NodeWorkerTarget.per_node(1),
+            minNodes=1,
+            maxNodes=node_config.get("max_nodes", 1000),
+            workerTag=flavour,
+            metricsEnabled=metrics_enabled,
+            idleNodeShutdown=auto_shut_down,
+            idlePoolShutdown=auto_shut_down)
+        
+        worker_pool: WorkerPool = self.yd_client.worker_pool_client.provision_worker_pool(                
+            compute_requirement_template_usage,                
+            provisioned_worker_pool_properties)
 
-            auto_shut_down = AutoShutdown(
-                enabled=True,
-                timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES))
-            
-            provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
-                createNodeWorkers=NodeWorkerTarget.per_node(1),
-                minNodes=1,
-                maxNodes=node_config.get("max_nodes", 1000),
-                workerTag=flavour,
-                metricsEnabled=metrics_enabled,
-                idleNodeShutdown=auto_shut_down,
-                idlePoolShutdown=auto_shut_down)
-            
-            worker_pool: WorkerPool = self.yd_client.worker_pool_client.provision_worker_pool(                
-                compute_requirement_template_usage,                
-                provisioned_worker_pool_properties)
-   
-            self._worker_pools[flavour] = worker_pool.id
+        self._worker_pools[flavour] = worker_pool.id
 
     def _connect_to_yellowdog_api(self) -> None:
         """Connect to the YellowDog API, using creds from environment variables and/or a .env file"""
@@ -615,7 +612,7 @@ class AutoRayDog():
         self._cluster_lifetime = head_task_group.runSpecification.taskTimeout 
 
         head_task: Task = self.get_tasks_in_task_group(head_task_group.id).list_all()[0]
-        self.head_node_task_id = head_task.id
+        self.head_node_id = head_task.id
 
         # Find which worker pools already exist
         worker_pools:SearchClient[WorkerPoolSummary] = self.yd_client.worker_pool_client.get_worker_pools(WorkerPoolSearch(
@@ -646,13 +643,13 @@ class AutoRayDog():
             statuses=[TaskStatus.EXECUTING])
         )
 
-    def get_ip_addresses(self, node_id: str) -> None:
+    def get_ip_addresses(self, node_id: str) -> tuple[str, str]:
         task: Task 
         while True:
             task = self.yd_client.work_client.get_task_by_id(node_id)
             if task.status in [ TaskStatus.PENDING, TaskStatus.READY ]:
                 logger.debug(f"Waiting for {node_id} to start running")
-                sleep(2)
+                sleep(5)
             else:
                 break
 
@@ -661,9 +658,28 @@ class AutoRayDog():
 
         return ( ydnode.details.publicIpAddress, ydnode.details.privateIpAddress )
 
-    def shut_down(self):
-        #TODO: shutdown cleanly
-        pass
+    def shut_down(self) -> None:
+        """Shut down the Ray cluster"""
+        if not self._is_shut_down:
+            self._is_shut_down = True
+
+            # Cancel the work requirement & abort all tasks
+            if self._work_requirement_id is not None:
+                try:
+                    self.yd_client.work_client.cancel_work_requirement_by_id(
+                        self._work_requirement_id, abort=True
+                    )
+                except HTTPError as e:
+                    if "InvalidWorkRequirementStatusException" in str(e):
+                        pass  # Suppress exception if it's just a state transition error
+                self._work_requirement_id = None
+
+            # Shut down all worker pools 
+            for worker_pool_id in self._worker_pools.values():
+                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
+            self._worker_pools = {}
+
+            
     
     @staticmethod
     def _get_node_id_for_task(task: Task) -> str:
@@ -739,7 +755,7 @@ class AutoRayDog():
             }
         )
 
-        self.head_node_task_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
+        self.head_node_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             work_requirement.taskGroups[0].id,
             [head_node_task])[0].id
 
@@ -751,7 +767,7 @@ class AutoRayDog():
             timed_out = lambda: False
              
         while True:  
-            head_task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
+            head_task = self.yd_client.work_client.get_task_by_id(self.head_node_id)
             if head_task.status == TaskStatus.EXECUTING:
                 break
 
@@ -763,11 +779,11 @@ class AutoRayDog():
 
         return head_task.id
  
- 
+
     def create_worker_nodes(self, 
         flavour: str,
         ray_start_script: str,
-        count: int) :
+        count: int) -> list[str]:
             
         logger.debug(f"create_worker_nodes {flavour} {count}")
         
