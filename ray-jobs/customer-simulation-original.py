@@ -5,9 +5,6 @@ import time
 import numpy as np
 import ray
 
-# Connect to the Ray cluster
-ray.init(address=f"ray://localhost:10001")
-
 
 def create_array_with_mean_max(mean_value, max_value, size):
     # Choose a random number of elements to be max_value
@@ -78,6 +75,9 @@ def run_group_g():
 def run_group_h():
     return [task.remote(m) for m in create_array_with_mean_max(3.14, 45, 1610)]
 
+
+# Connect to the Ray cluster
+ray.init(address=f"ray://localhost:10001")
 
 all_tasks = []
 a1_tasks = set(run_group_a1())

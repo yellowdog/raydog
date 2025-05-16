@@ -1,4 +1,7 @@
 black
+dotenv
 isort
-sshtunnel
+numpy
 ray[client]
+sshtunnel
+yellowdog-sdk
