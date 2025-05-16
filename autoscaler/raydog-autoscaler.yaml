@@ -56,7 +56,7 @@ head_node_type: ray_head_default
 # How Ray will authenticate with newly launched nodes.
 auth:
   ssh_user: yd-agent
-  ssh_private_key: private-key
+  ssh_private_key: ../private-key
 
 # The maximum number of workers nodes to launch in addition to the head
 # node.
