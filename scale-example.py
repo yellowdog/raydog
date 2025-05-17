@@ -48,6 +48,15 @@ for name, script_path in SCRIPT_PATHS.items():
 AMI = "ami-0c6175878f7e01e70"  # ray-246-observability-docker-8GB, eu-west-2
 USERDATA = None
 
+# Use a larger head node / observability node instance if number of worker nodes
+# meets or exceeds this threshold
+LARGE_HEAD_NODE_THRESHOLD = 1000
+CONTROL_NODE_TEMPLATE_ID = (
+    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+    if TOTAL_WORKER_NODES < LARGE_HEAD_NODE_THRESHOLD
+    else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+)
+
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
@@ -64,21 +73,13 @@ def main():
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
             cluster_tag=f"{USERNAME}-ray-testing",
             cluster_namespace=f"{USERNAME}-ray",
-            head_node_compute_requirement_template_id=(
-                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
-                if TOTAL_WORKER_NODES > 1000
-                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
-            ),
+            head_node_compute_requirement_template_id=CONTROL_NODE_TEMPLATE_ID,
             head_node_images_id=AMI,
             head_node_metrics_enabled=True,
             head_node_userdata=USERDATA,
             head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
             enable_observability=ENABLE_OBSERVABILITY,
-            observability_node_compute_requirement_template_id=(
-                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
-                if TOTAL_WORKER_NODES > 1000
-                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
-            ),
+            observability_node_compute_requirement_template_id=CONTROL_NODE_TEMPLATE_ID,
             observability_node_images_id=AMI,
             observability_node_metrics_enabled=True,
             observability_node_userdata=USERDATA,
