@@ -54,7 +54,7 @@ VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
 echo "Installing Ray"
-uv pip install ray[client] sshtunnel yellowdog-sdk redis
+uv pip install "ray[client]" "ray[default]" sshtunnel yellowdog-sdk redis numpy
 
 ################################################################################
 
@@ -63,8 +63,6 @@ echo "Downloading RayDog files"
 curl -L -o $YD_AGENT_HOME/raydog.tgz "https://drive.google.com/uc?export=download&id=1MM0OpucCLO8wySHmi_U-YyD9TD8Vt9yz"
 tar -xf $YD_AGENT_HOME/raydog.tgz -C $YD_AGENT_HOME 
 
-mkdir -p $YD_AGENT_HOME/tags
-
 echo "Modifying Ray script"
 RAYFILE=$VENV/bin/ray 
 cp $RAYFILE $RAYFILE.bak
@@ -72,6 +70,7 @@ awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
 
 echo "Create bashrc to setup the Ray environment"
 echo "export PYTHONPATH=/opt/yellowdog/agent" > $YD_AGENT_HOME/.bashrc
+echo "VIRTUAL_ENV_DISABLE_PROMPT=true" >> $YD_AGENT_HOME/.bashrc
 echo "source $VENV/bin/activate" >> $YD_AGENT_HOME/.bashrc
 
 ################################################################################

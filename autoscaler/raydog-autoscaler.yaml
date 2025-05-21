@@ -1,9 +1,10 @@
-# Confiuration for the YellowDog RayDog autoscaler
+# Configuration for the YellowDog RayDog autoscaler
 provider:
   type: external
   module: raydog.autoscaler.RayDogNodeProvider
+  
   namespace: raydog-example
-  lifetime: 30m
+  lifetime: 60m
   build_timeout: 10m
 
   foreground_node_launch: True
@@ -19,7 +20,7 @@ provider:
   - set -euo pipefail
   - ray stop
   - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
-
+ 
   worker_start_ray_script:
   - "#!/bin/bash"
   - "source $HOME/.bashrc"
@@ -27,6 +28,11 @@ provider:
   - set -euo pipefail
   - ray stop
   - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
+
+  # Have to duplicate the auth setttings, so that the RayDog provider can access the tag store
+  auth:
+    ssh_user: yd-agent
+    ssh_private_key: ../private-key
 
 # A unique identifier for the head node and workers of this cluster. Not case sensitive
 cluster_name: raydog-123ABCxyz
@@ -36,19 +42,18 @@ available_node_types:
   ray_head_default:
     resources: { "CPU": 0 }
     node_config:
-      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-split-ondemand           
-      images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c
+      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-raydemo-head   
+      images_id: ydid:imgfam:48592E:68c3346a-c69f-43a8-b03f-a3df81de00cc # ARM        
+      #images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c # AMD64
       max_nodes: 1
 
   ray_worker_small:
-    resources: { "CPU": 2 }
+    resources: { "CPU": 1 }
     min_workers: 1
-    max_workers: 20    
+    max_workers: 100    
     node_config:
-      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-split-ondemand           
-      images_id: ydid:imgfam:48592E:f18416ef-fb11-493d-add6-8d834d58289c
+      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-1-raydemo-spot    
       max_nodes: 100
-      #images_id: ami-0fef583e486727263
 
 # Specify the node type of the head node (as configured above).
 head_node_type: ray_head_default
@@ -60,7 +65,7 @@ auth:
 
 # The maximum number of workers nodes to launch in addition to the head
 # node.
-max_workers: 10
+max_workers: 1000
 
 # The autoscaler will scale up the cluster faster with higher upscaling speed.
 # E.g., if the task requires adding more nodes then autoscaler will gradually
@@ -69,7 +74,7 @@ max_workers: 10
 upscaling_speed: 1.0
 
 # If a node is idle for this many minutes, it will be removed.
-idle_timeout_minutes: 5
+idle_timeout_minutes: 2
 
 # Files or directories to copy to the head and worker nodes. The format is a
 # dictionary from REMOTE_PATH: LOCAL_PATH, e.g.

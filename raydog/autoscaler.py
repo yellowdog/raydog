@@ -3,8 +3,7 @@ import os
 import random
 import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from time import sleep
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +24,7 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
+    TaskOutput,
     TaskSearch,
     TaskStatus,
     WorkerPool,
@@ -222,8 +222,9 @@ class RayDogNodeProvider(NodeProvider):
             if node_type == "head":
                 node_init_script += r"""
 VALKEY_VERSION=8.1.1
-curl -O  https://download.valkey.io/releases/valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz
-tar -xf valkey-$VALKEY_VERSION-jammy-x86_64.tar.gz  -C $YD_AGENT_HOME 
+CPU=`arch | sed s/aarch64/arm64/`
+curl -O  https://download.valkey.io/releases/valkey-$VALKEY_VERSION-jammy-$CPU.tar.gz
+tar -xf valkey-$VALKEY_VERSION-jammy-$CPU.tar.gz  -C $YD_AGENT_HOME 
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 """
             # Create the YellowDog worker pool
@@ -537,7 +538,7 @@ class AutoRayDog:
         logger.debug(f"create_worker_pool {flavour}")
 
         compute_requirement_template_id = node_config["compute_requirement_template"]
-        images_id = node_config["images_id"]
+        images_id = node_config.get("images_id", None)
 
         worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
 
@@ -800,6 +801,10 @@ class AutoRayDog:
                 "YD_API_KEY_SECRET": self._api_key_secret,
                 "YD_API_URL": self._api_url,
             },
+            outputs=(
+                [ TaskOutput.from_task_process() ]
+            ),
+            name="head_node_task"
         )
 
         self.head_node_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
@@ -851,7 +856,6 @@ class AutoRayDog:
         # If there isn't one, create it
         if not task_group:
             index = len(work_requirement.taskGroups)
-            # logger.debug(f"index {index}")
 
             work_requirement.taskGroups.append(
                 TaskGroup(
