@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 
 import time
-
+import socket
 import numpy as np
 import ray
+import io
+import os
 
 # Connect to the Ray cluster
 ray.init(address=f"ray://localhost:10001")
 
+TEST=True
 
 def create_array_with_mean_max(mean_value, max_value, size):
     # Choose a random number of elements to be max_value
@@ -36,8 +39,31 @@ def create_array_with_mean_max(mean_value, max_value, size):
 
 @ray.remote(num_cpus=1)
 def task(minutes):
+    start = time.time()
     time.sleep(minutes * 60)
-
+    finish = time.time()
+    
+    hostname = socket.gethostname()
+    task_id = ray.get_runtime_context().get_task_id()
+    job_id = ray.get_runtime_context().get_job_id()
+    cluster_name = os.getenv("CLUSTER_NAME")
+    if cluster_name is None:
+        cluster_name = "no_cluster_name"
+        
+    ds = ray.data.from_items([{
+        "clusteName": cluster_name,
+        "jobId": job_id,
+        "taskId": task_id, 
+        "hostname": hostname,
+        "start": start,
+        "finish": finish,
+        "duration": finish - start
+    }])
+    
+    ds.write_json(f"s3://tech.yellowdog.devsandbox.dev-platform/raydog/task_output/{cluster_name}/{job_id}/task_{task_id}")
+    
+def run_group_test():
+    return [task.remote(1) for i in range(0,100)]
 
 def run_group_a1():
     return [task.remote(m) for m in create_array_with_mean_max(10.2, 30, 45200)]
@@ -78,56 +104,58 @@ def run_group_g():
 def run_group_h():
     return [task.remote(m) for m in create_array_with_mean_max(3.14, 45, 1610)]
 
-
 all_tasks = []
-print("Adding run group a1")
-a1_tasks = set(run_group_a1())
-all_tasks.extend(a1_tasks)
-print("Adding run group b1")
-b1_tasks = set(run_group_b1())
-all_tasks.extend(b1_tasks)
-print("Adding run group c")
-all_tasks.extend(run_group_c())
-print("Adding run group e")
-all_tasks.extend(run_group_e())
-print("Adding run group f")
-all_tasks.extend(run_group_f())
-print("Adding run group g")
-all_tasks.extend(run_group_g())
-print("Adding run group h")
-all_tasks.extend(run_group_h())
-print("Converting a2 group to set")
-a2_tasks = set()
-
-try:
+if TEST:
+    all_tasks.extend(set(run_group_test()))
     while all_tasks:
         ready_tasks, all_tasks = ray.wait(all_tasks, num_returns=1)
-        if ready_tasks[0] in a1_tasks:
-            print(f"Removing a1 task {ready_tasks[0]}")
-            a1_tasks.remove(ready_tasks[0])
-            if not a1_tasks:
-                print("Adding run group a2")
-                a2_tasks = run_group_a2()
-                all_tasks.extend(a2_tasks)
-            continue
-        if ready_tasks[0] in b1_tasks:
-            print(f"Removing b1 task {ready_tasks[0]}")
-            b1_tasks.remove(ready_tasks[0])
-            if not b1_tasks:
-                print("Adding run group b2")
-                all_tasks.extend(run_group_b2())
-            continue
-        if ready_tasks[0] in a2_tasks:
-            print(f"Removing a2 task {ready_tasks[0]}")
-            a2_tasks.remove(ready_tasks[0])
-            if not a2_tasks:
-                print("Adding run group a3")
-                all_tasks.extend(run_group_a3())
+        continue
+else:
+    print("Adding run group a1")
+    a1_tasks = set(run_group_a1())
+    all_tasks.extend(a1_tasks)
+    print("Adding run group b1")
+    b1_tasks = set(run_group_b1())
+    all_tasks.extend(b1_tasks)
+    print("Adding run group c")
+    all_tasks.extend(run_group_c())
+    print("Adding run group e")
+    all_tasks.extend(run_group_e())
+    print("Adding run group f")
+    all_tasks.extend(run_group_f())
+    print("Adding run group g")
+    all_tasks.extend(run_group_g())
+    print("Adding run group h")
+    all_tasks.extend(run_group_h())
+    print("Converting a2 group to set")
+    a2_tasks = set()
 
-except:
-    pass
+    try:
+        while all_tasks:
+            ready_tasks, all_tasks = ray.wait(all_tasks, num_returns=1)
+            if ready_tasks[0] in a1_tasks:
+                print(f"Removing a1 task {ready_tasks[0]}")
+                a1_tasks.remove(ready_tasks[0])
+                if not a1_tasks:
+                    print("Adding run group a2")
+                    a2_tasks = run_group_a2()
+                    all_tasks.extend(a2_tasks)
+                continue
+            if ready_tasks[0] in b1_tasks:
+                print(f"Removing b1 task {ready_tasks[0]}")
+                b1_tasks.remove(ready_tasks[0])
+                if not b1_tasks:
+                    print("Adding run group b2")
+                    all_tasks.extend(run_group_b2())
+                continue
+            if ready_tasks[0] in a2_tasks:
+                print(f"Removing a2 task {ready_tasks[0]}")
+                a2_tasks.remove(ready_tasks[0])
+                if not a2_tasks:
+                    print("Adding run group a3")
+                    all_tasks.extend(run_group_a3())
 
-# finally:
-    # ray.shutdown()
+    except:
+        pass
 
 print("All Done!")
