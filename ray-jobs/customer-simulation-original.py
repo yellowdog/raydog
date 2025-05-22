@@ -7,9 +7,6 @@ import ray
 import io
 import os
 
-# Connect to the Ray cluster
-ray.init(address=f"ray://localhost:10001")
-
 TEST=True
 
 def create_array_with_mean_max(mean_value, max_value, size):
@@ -103,6 +100,10 @@ def run_group_g():
 
 def run_group_h():
     return [task.remote(m) for m in create_array_with_mean_max(3.14, 45, 1610)]
+
+
+# Connect to the Ray cluster
+ray.init(address=f"ray://localhost:10001")
 
 all_tasks = []
 if TEST:

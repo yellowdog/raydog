@@ -68,6 +68,15 @@ try:
 except:
     USERNAME = "default"
 
+# Use a larger head node / observability node instance if number of worker nodes
+# meets or exceeds this threshold
+LARGE_HEAD_NODE_THRESHOLD = 1000
+CONTROL_NODE_TEMPLATE_ID = (
+    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+    if TOTAL_WORKER_NODES < LARGE_HEAD_NODE_THRESHOLD
+    else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+)
+
 
 def mirror_folder_on_agent(local_path, bucket_dir, base) -> dict[str, str]:
     return {
@@ -153,9 +162,7 @@ def main():
         for _ in range(NUM_WORKER_POOLS):
             raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id=(
-                    "yd-demo/devsandbox-eu-west-2-fleet-smalls"
-                    if WORKERS_PER_NODE < 10
-                    else "yd-demo/raydog-workers-public-on-demand-big"
+                    "yd-demo/yd-demo-aws-eu-west-2-split-spot-rayworker"
                 ),
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
                 worker_node_images_id="ami-0716f015de8fad689",
