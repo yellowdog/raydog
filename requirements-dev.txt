@@ -2,6 +2,6 @@ black
 dotenv
 isort
 numpy
-ray[client]
+ray[client]==2.46.0
 sshtunnel
 yellowdog-sdk

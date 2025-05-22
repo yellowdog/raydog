@@ -1,0 +1,4 @@
+node-label:
+    - "ray.io/head=true"
+node-taint:
+    - "ray.io/head=true:NoSchedule"

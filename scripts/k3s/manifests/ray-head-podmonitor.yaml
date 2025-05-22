@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ray-head
+  labels:
+    release: kube-prometheus
+spec:
+  jobLabel: ray-head
+  podMetricsEndpoints:
+    - honorLabels: true
+      port: metrics
+      interval: 60s
+      path: /metrics
+      scrapeTimeout: 15s
+  selector:
+    matchLabels:
+      ray-role: head

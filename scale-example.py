@@ -1,35 +1,54 @@
 #!/usr/bin/env python3
 
-# Dimensioning the cluster: total workers is the product of the vars below
-# Each compute requirement is split across eu-west-2{a, b, c}
-# Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
-#       should be 1,500 (500 instances per AZ)
-
-WORKER_NODES_PER_POOL = 500  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 3
-TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
-
-# Sleep duration for each Ray task in the test job
-TASK_SLEEP_TIME_SECONDS = 10
-
-ENABLE_OBSERVABILITY = True
-
 import logging
 import time
 from datetime import datetime, timedelta
 from getpass import getuser
 from os import getenv, path
+from pathlib import Path
 
 import dotenv
 import ray
 
-from raydog.raydog import RayDogCluster
-from utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
+from raydog.raydog import RayDogCluster, RayDogWorkSpecification
 
-try:
-    USERNAME = getuser().replace(" ", "_").lower()
-except:
-    USERNAME = "default"
+# Dimensioning the cluster: total workers is the product of the vars below
+# Each compute requirement is split across eu-west-2{a, b, c}
+# Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
+#       should be 1,500 (500 instances per AZ)
+
+WORKER_NODES_PER_POOL = 10  # Must be <= 1500, assuming split across 3 AZs
+NUM_WORKER_POOLS = 1
+TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
+
+COMMON_ENV_VARS={}
+AMI="ami-067058dcad9a25efa"
+USERDATA = None
+
+# k3s stuff
+# WORKERS_PER_NODE is just used as an inticator for node size. 
+# Ray worker deployment requests 0.1 CPU and 1G RAM per pod, so that should be
+# taken into account when selecting node size. Pods in the deployment are spread
+# evenly across nodes. There's also a soft limit of about 100 pods per node.
+# With k3s enabled the worker and head node start scripts are replaced by an
+# installation of k3s where the nodes are labeled and tainted according to their
+# role (head|worker). The deployment of the ray head node, redis and workers is
+# coordinated by kubernetes on the k3s server. The worker deployment is not
+# currently dynamically sized according to TOTAL_WORKERS, because starting too
+# many pods at a time kills the k3s server. Therefore, gradual scaling is 
+# required. Log on to the k3s node and run:
+# `sudo kubectl scale deployment/ray-workers --replicas=n`
+# to increase or decrease the workers in the cluster.
+ENABLE_K3S = False
+WORKERS_PER_NODE = 1
+TOTAL_WORKERS=TOTAL_WORKER_NODES * WORKERS_PER_NODE 
+RCLONE_REMOTE=":s3,region=eu-west-2,env_auth:tech.yellowdog.devsandbox.dev-platform/raydog/"
+
+# Mutually exclusive with k3s, so ignored if k3s is enabled
+ENABLE_OBSERVABILITY = False
+
+# Sleep duration for each Ray task in the test job
+TASK_SLEEP_TIME_SECONDS = 10
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
@@ -44,19 +63,80 @@ for name, script_path in SCRIPT_PATHS.items():
     with open(path.join(CURRENT_DIR, script_path), "r") as file:
         DEFAULT_SCRIPTS[name] = file.read()
 
-# Node boot setup
-AMI = "ami-0c6175878f7e01e70"  # ray-246-observability-docker-8GB, eu-west-2
-USERDATA = None
+try:
+    USERNAME = getuser().replace(" ", "_").lower()
+except:
+    USERNAME = "default"
 
+
+def mirror_folder_on_agent(local_path, bucket_dir, base) -> dict[str, str]:
+    return {
+        f"rclone:{bucket_dir}/{f.relative_to(base)}": f"local:{f.relative_to(base)}"
+        for f in list(Path(local_path).rglob("*.*"))
+    }
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
     raydog_cluster: RayDogCluster | None = None
-    ssh_tunnels: RayTunnels | None = None
     try:
         # Read any extra environment variables from a file
         dotenv.load_dotenv(verbose=True, override=True)
 
+        task_inputs = mirror_folder_on_agent(f"{CURRENT_DIR}/scripts/k3s", f"{RCLONE_REMOTE}setup", f"{CURRENT_DIR}/scripts/k3s")
+        task_outputs = {"local:task_*": f"rclone:{RCLONE_REMOTE}raytest-{timestamp}/task-output/"}
+        
+        k3s = None
+        if ENABLE_K3S:
+            COMMON_ENV_VARS.update({
+                "K3S_TOKEN": "pd0i3okrm9pyfr73",
+                "OBSERVABILITY_PROMETHEUS_PORT": "30090",
+                "OBSERVABILITY_GRAFANA_PORT": "30030",
+            })
+            k3s = RayDogWorkSpecification(
+                images_id=AMI,
+                capture_taskoutput=True,
+                environment_variables=COMMON_ENV_VARS,
+                task_script="chmod +x ./k3s-install.sh && ./k3s-install.sh server",
+                task_inputs=task_inputs,
+                compute_requirement_template_id=(
+                    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+                    if TOTAL_WORKERS >= 1000
+                    else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+                ),
+            )
+            
+        head_node = RayDogWorkSpecification(
+            compute_requirement_template_id=(
+                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+                if TOTAL_WORKERS > 1000
+                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+            ),
+            images_id="ami-0716f015de8fad689",
+            metrics_enabled=True,
+            userdata=USERDATA,
+            task_script=DEFAULT_SCRIPTS['head-node-task-script'],
+            capture_taskoutput=True,
+            environment_variables=COMMON_ENV_VARS,
+            task_inputs=task_inputs,
+        )
+        
+        observability = None
+        if ENABLE_OBSERVABILITY and not ENABLE_K3S:
+            observability = RayDogWorkSpecification(
+                compute_requirement_template_id=(
+                    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
+                    if TOTAL_WORKER_NODES > 1000
+                    else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+                ),
+                images_id=AMI,
+                metrics_enabled=True,
+                userdata=USERDATA,
+                capture_taskoutput=True,
+                task_script=DEFAULT_SCRIPTS[
+                    "observability-node-task-script"
+                ],
+            ) 
+        
         # Configure the Ray cluster
         raydog_cluster = RayDogCluster(
             yd_application_key_id=getenv("YD_API_KEY_ID"),
@@ -64,43 +144,29 @@ def main():
             cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
             cluster_tag=f"{USERNAME}-ray-testing",
             cluster_namespace=f"{USERNAME}-ray",
-            head_node_compute_requirement_template_id=(
-                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
-                if TOTAL_WORKER_NODES > 1000
-                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
-            ),
-            head_node_images_id=AMI,
-            head_node_metrics_enabled=True,
-            head_node_userdata=USERDATA,
-            head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
-            enable_observability=ENABLE_OBSERVABILITY,
-            observability_node_compute_requirement_template_id=(
-                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
-                if TOTAL_WORKER_NODES > 1000
-                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
-            ),
-            observability_node_images_id=AMI,
-            observability_node_metrics_enabled=True,
-            observability_node_userdata=USERDATA,
-            head_node_capture_taskoutput=True,
-            observability_node_capture_taskoutput=True,
-            observability_node_start_script=DEFAULT_SCRIPTS[
-                "observability-node-task-script"
-            ],
+            head_node_work_specification=head_node,
+            observability_work_specification=observability,
+            k3s_work_specification=k3s
         )
 
         # Add the worker pools
         for _ in range(NUM_WORKER_POOLS):
             raydog_cluster.add_worker_pool(
                 worker_node_compute_requirement_template_id=(
-                    "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
+                    "yd-demo/devsandbox-eu-west-2-fleet-smalls"
+                    if WORKERS_PER_NODE < 10
+                    else "yd-demo/raydog-workers-public-on-demand-big"
                 ),
                 worker_pool_node_count=WORKER_NODES_PER_POOL,
-                worker_node_images_id=AMI,
+                worker_node_images_id="ami-0716f015de8fad689",
                 worker_node_metrics_enabled=True,
-                worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
                 worker_node_userdata=USERDATA,
                 worker_node_capture_taskoutput=True,
+                worker_node_task_script=DEFAULT_SCRIPTS['worker-node-task-script'],
+                worker_node_task_inputs=task_inputs,
+                worker_node_task_outputs=task_outputs,
+                workers_per_node=WORKERS_PER_NODE,
+                worker_node_environment_variables=COMMON_ENV_VARS
             )
 
         # Build the Ray cluster
@@ -110,40 +176,11 @@ def main():
         )
         print(f"Ray head node started at public IP address: '{public_ip}'")
 
-        tunnels = [
-            RayTunnels.basic_port_forward(10001),
-            RayTunnels.basic_port_forward(8265),
-        ]
-
-        if ENABLE_OBSERVABILITY:
-            tunnels.append(
-                SSHTunnelSpec(
-                    "localhost",
-                    3000,
-                    str(raydog_cluster.observability_node_private_ip),
-                    3000,
-                )
-            )
-            tunnels.append(
-                SSHTunnelSpec(
-                    "localhost",
-                    9090,
-                    str(raydog_cluster.observability_node_private_ip),
-                    9090,
-                )
-            )
-
         # Allow time for the API and Dashboard to start before creating
         # the SSH tunnels
         print("Waiting for Ray services to start...")
         time.sleep(20)
-        ssh_tunnels = RayTunnels(
-            ray_head_ip_address=public_ip,
-            ssh_user="yd-agent",
-            private_key_file="private-key",
-            ray_tunnel_specs=tunnels,
-        )
-        ssh_tunnels.start_tunnels()
+        raydog_cluster.start_tunnels()
 
         cluster_address = "ray://localhost:10001"
         print(
@@ -171,9 +208,7 @@ def main():
         if raydog_cluster is not None:
             print("Shutting down Ray cluster")
             raydog_cluster.shut_down()
-        if ssh_tunnels is not None:
-            print("Shutting down SSH tunnels")
-            ssh_tunnels.stop_tunnels()
+            raydog_cluster.stop_tunnels()
 
 
 # Define a remote task that uses 1 CPU

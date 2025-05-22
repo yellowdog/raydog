@@ -3,8 +3,10 @@ Build a Ray cluster using YellowDog.
 """
 
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import auto
+from re import I
 from time import sleep
 
 from requests.exceptions import HTTPError
@@ -19,23 +21,31 @@ from yellowdog_client.model import (
     RunSpecification,
     ServicesSchema,
     Task,
+    TaskOutput,
+    TaskData,
+    TaskDataInput,
+    TaskDataOutput,
     TaskGroup,
     TaskOutput,
     TaskStatus,
     WorkRequirement,
+    
 )
 from yellowdog_client.platform_client import PlatformClient
+from utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
 
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
 HEAD_NODE_TASK_GROUP_NAME = "head-node"
 WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
 OBSERVABILITY_NODE_TASK_GROUP_NAME = "observability-node"
+K3S_SERVER_TASK_GROUP_NAME = "k3s-servers"
 
 TASK_TYPE = "bash"
 
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10)
-IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT = timedelta(minutes=3)
+IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT = timedelta(minutes=10)
+NODE_BOOT_TIMEOUT=timedelta(minutes=60)
 
 
 @dataclass
@@ -46,6 +56,73 @@ class WorkerNodeWorkerPool:
     task_prototype: Task
     worker_pool_id: str | None = None
 
+@dataclass
+class RayDogWorkSpecification:
+    compute_requirement_template_id: str
+    task_script: str
+    images_id: str | None = None
+    userdata: str | None = None
+    instance_tags: dict[str, str] | None = None
+    metrics_enabled: bool | None = None
+    task_inputs: dict[str,str] | None = None
+    capture_taskoutput: bool = False
+    environment_variables: dict[str, str] = field(default_factory=dict)
+    
+    def get_yellowdog_objects(
+        self, cluster_name: str, 
+        cluster_namespace: str, 
+        cluster_tag: str | None, 
+        cluster_lifetime: timedelta | None, 
+        node_naming: str, 
+        task_name: str, 
+        task_group_name: str,
+        auto_shutdown: AutoShutdown | None
+    ) -> tuple[ComputeRequirementTemplateUsage, ProvisionedWorkerPoolProperties, Task, TaskGroup]:
+        
+        task_inputs = None
+        if self.task_inputs is not None:
+            task_inputs = [TaskDataInput(source, dest) for source, dest in self.task_inputs.items()]
+            
+        return (
+            ComputeRequirementTemplateUsage(
+                templateId=self.compute_requirement_template_id,
+                requirementName=node_naming,
+                requirementNamespace=cluster_namespace,
+                requirementTag=cluster_tag,
+                targetInstanceCount=1,
+                imagesId=self.images_id,
+                userData=self.userdata,
+                instanceTags=self.instance_tags,
+            ),
+            ProvisionedWorkerPoolProperties(
+                createNodeWorkers=NodeWorkerTarget.per_node(1),
+                minNodes=0,
+                maxNodes=1,
+                workerTag=node_naming,
+                metricsEnabled=self.metrics_enabled,
+                idleNodeShutdown=auto_shutdown,
+                idlePoolShutdown=auto_shutdown,
+            ),
+            Task(name=task_name,
+                taskType=TASK_TYPE,
+                taskData=self.task_script,
+                data=TaskData(task_inputs),
+                arguments=["taskdata.txt"],
+                environment=self.environment_variables,
+                outputs=None if self.capture_taskoutput is False else [TaskOutput.from_task_process()],
+            ),
+            TaskGroup(
+                name=task_group_name,
+                finishIfAnyTaskFailed=True,
+                runSpecification=RunSpecification(
+                    taskTypes=[TASK_TYPE],
+                    workerTags=[node_naming],
+                    namespaces=[cluster_namespace],
+                    exclusiveWorkers=True,
+                    taskTimeout=cluster_lifetime,
+                ),
+            )
+        )
 
 class RayDogCluster:
     """
@@ -58,23 +135,11 @@ class RayDogCluster:
         yd_application_key_secret: str,
         cluster_name: str,
         cluster_namespace: str,
-        head_node_compute_requirement_template_id: str,
-        head_node_ray_start_script: str,
+        head_node_work_specification: RayDogWorkSpecification,
         yd_platform_api_url: str = YD_DEFAULT_API_URL,
         cluster_tag: str | None = None,
-        head_node_images_id: str | None = None,
-        head_node_userdata: str | None = None,
-        head_node_instance_tags: dict[str, str] | None = None,
-        head_node_metrics_enabled: bool | None = None,
-        head_node_capture_taskoutput: bool = False,
-        enable_observability: bool = False,
-        observability_node_compute_requirement_template_id: str | None = None,
-        observability_node_instance_tags: dict[str, str] | None = None,
-        observability_node_images_id: str | None = None,
-        observability_node_userdata: str | None = None,
-        observability_node_metrics_enabled: bool | None = None,
-        observability_node_start_script: str | None = None,
-        observability_node_capture_taskoutput: bool = False,
+        observability_work_specification: RayDogWorkSpecification | None = None,
+        k3s_work_specification: RayDogWorkSpecification | None = None,
         cluster_lifetime: timedelta | None = None,
     ):
         """
@@ -133,68 +198,24 @@ class RayDogCluster:
 
         head_node_naming = f"{cluster_name}-00-head"
 
-        self._auto_shut_down = AutoShutdown(
+        self._auto_shutdown = AutoShutdown(
             enabled=True,
             timeout=IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT,
         )
 
-        self._taskoutput = [TaskOutput.from_task_process()]
-
-        self._head_node_compute_requirement_template_usage = (
-            ComputeRequirementTemplateUsage(
-                templateId=head_node_compute_requirement_template_id,
-                requirementName=head_node_naming,
-                requirementNamespace=cluster_namespace,
-                requirementTag=cluster_tag,
-                targetInstanceCount=1,
-                imagesId=head_node_images_id,
-                userData=head_node_userdata,
-                instanceTags=head_node_instance_tags,
-            )
-        )
-
-        self._head_node_provisioned_worker_pool_properties = (
-            ProvisionedWorkerPoolProperties(
-                createNodeWorkers=NodeWorkerTarget.per_node(1),
-                minNodes=0,
-                maxNodes=1,
-                workerTag=head_node_naming,
-                metricsEnabled=head_node_metrics_enabled,
-                idleNodeShutdown=self._auto_shut_down,
-                idlePoolShutdown=self._auto_shut_down,
-            )
-        )
-
-        self._head_node_task = Task(
-            name=self._next_task_name,
-            taskType=TASK_TYPE,
-            taskData=head_node_ray_start_script,
-            arguments=["taskdata.txt"],
-            environment={},
-            outputs=None if head_node_capture_taskoutput is False else self._taskoutput,
-        )
-
-        self._work_requirement = WorkRequirement(
+        head_node_objects = head_node_work_specification.get_yellowdog_objects(cluster_name, cluster_namespace, cluster_tag, cluster_lifetime, head_node_naming, self._next_task_name, HEAD_NODE_TASK_GROUP_NAME, self._auto_shutdown)
+        self._head_node_compute_requirement_template_usage = head_node_objects[0]
+        self._head_node_provisioned_worker_pool_properties = head_node_objects[1]
+        self._head_node_task = head_node_objects[2]
+        self._head_node_task_group = head_node_objects[3]
+        
+        self._work_requirement = work_requirement = WorkRequirement(
             name=cluster_name,
             namespace=cluster_namespace,
             tag=cluster_tag,
-            taskGroups=[
-                TaskGroup(
-                    name=HEAD_NODE_TASK_GROUP_NAME,
-                    finishIfAnyTaskFailed=True,
-                    runSpecification=RunSpecification(
-                        taskTypes=[TASK_TYPE],
-                        workerTags=[head_node_naming],
-                        namespaces=[cluster_namespace],
-                        exclusiveWorkers=True,
-                        taskTimeout=cluster_lifetime,
-                    ),
-                ),
-            ],
+            taskGroups=[self._head_node_task_group],
         )
-
         self._task_group_running_total = 0  # Note: never decremented
-
         self._is_built = False
         self._is_shut_down = False
 
@@ -210,70 +231,43 @@ class RayDogCluster:
         self.head_node_public_ip: str | None = None
         self.head_node_task_id: str | None = None
         self.worker_node_worker_pools: dict[str, WorkerNodeWorkerPool] = {}
-        self.enable_observability = enable_observability
-
-        if not self.enable_observability:
-            return
-
-        observability_node_naming = f"{cluster_name}-observability-00"
-
-        self._observability_node_compute_requirement_template_usage = (
-            ComputeRequirementTemplateUsage(
-                templateId=observability_node_compute_requirement_template_id,
-                requirementName=f"{cluster_name}-observability",
-                requirementNamespace=cluster_namespace,
-                requirementTag=cluster_tag,
-                targetInstanceCount=1,
-                imagesId=observability_node_images_id,
-                userData=observability_node_userdata,
-                instanceTags=observability_node_instance_tags,
-            )
-        )
-
-        self._observability_node_provisioned_worker_pool_properties = (
-            ProvisionedWorkerPoolProperties(
-                createNodeWorkers=NodeWorkerTarget.per_node(1),
-                minNodes=0,
-                maxNodes=1,
-                workerTag=observability_node_naming,
-                metricsEnabled=observability_node_metrics_enabled,
-                idleNodeShutdown=self._auto_shut_down,
-                idlePoolShutdown=self._auto_shut_down,
-            )
-        )
-
-        self._work_requirement.taskGroups.append(
-            TaskGroup(
-                name=OBSERVABILITY_NODE_TASK_GROUP_NAME,
-                finishIfAnyTaskFailed=False,
-                runSpecification=RunSpecification(
-                    taskTypes=[TASK_TYPE],
-                    workerTags=[observability_node_naming],
-                    namespaces=[cluster_namespace],
-                    exclusiveWorkers=True,
-                    taskTimeout=cluster_lifetime,
-                ),
-            )
-        )
-
-        self._observability_node_task = Task(
-            name=self._next_task_name,
-            taskType=TASK_TYPE,
-            taskData=observability_node_start_script,
-            arguments=["taskdata.txt"],
-            outputs=(
-                None
-                if observability_node_capture_taskoutput is False
-                else self._taskoutput
-            ),
-        )
-
-        # Properties publicly available for reading
-        self.observability_node_id: str | None = None
-        self.observability_node_private_ip: str | None = None
-        self.observability_node_worker_pool_id: str | None = None
-        self.observability_node_private_ip: str | None = None
-        self.observability_node_task_id: str | None = None
+        
+        self.enable_observability = False
+        if observability_work_specification is not None:
+            self.enable_observability = True
+            # Set observability node properties
+            observability_node_naming = f"{cluster_name}-observability-00"
+            observability_objects = observability_work_specification.get_yellowdog_objects(cluster_name, cluster_namespace, cluster_tag, cluster_lifetime, observability_node_naming, self._next_task_name, OBSERVABILITY_NODE_TASK_GROUP_NAME, self._auto_shutdown)
+            self._observability_node_compute_requirement_template_usage = observability_objects[0]
+            self._observability_node_provisioned_worker_pool_properties = observability_objects[1]           
+            self._observability_node_task = observability_objects[2]
+            self._work_requirement.taskGroups.append(observability_objects[3])
+    
+            self.observability_node_id: str | None = None
+            self.observability_node_private_ip: str | None = None
+            self.observability_node_worker_pool_id: str | None = None
+            self.observability_node_private_ip: str | None = None
+            self.observability_node_task_id: str | None = None
+        
+        self.enable_k3s = False
+        if k3s_work_specification is not None:
+            self.enable_k3s = True
+            
+            k3s_naming = f"{cluster_name}-k3s-00"
+            k3s_objects = k3s_work_specification.get_yellowdog_objects(cluster_name, cluster_namespace, cluster_tag, cluster_lifetime, k3s_naming, self._next_task_name, K3S_SERVER_TASK_GROUP_NAME, self._auto_shutdown)
+            
+            self._k3s_compute_requirement_template_usage = k3s_objects[0]
+            self._k3s_provisioned_worker_pool_properties = k3s_objects[1]           
+            self._k3s_task = k3s_objects[2]
+            self._work_requirement.taskGroups.append(k3s_objects[3])
+    
+            self.k3s_id: str | None = None
+            self.k3s_private_ip: str | None = None
+            self.k3s_worker_pool_id: str | None = None
+            self.k3s_private_ip: str | None = None
+            self.k3s_task_id: str | None = None
+        
+        self._ssh_tunnels: RayTunnels | None = None
 
     def add_worker_pool(
         self,
@@ -286,6 +280,10 @@ class RayDogCluster:
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
         worker_node_capture_taskoutput: bool = False,
+        workers_per_node: int = 1,
+        worker_node_environment_variables: dict[str, str] = {},
+        worker_node_task_inputs: dict[str, str] | None = None,
+        worker_node_task_outputs: dict[str, str] | None = None,
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -320,12 +318,27 @@ class RayDogCluster:
 
         if worker_pool_node_count < 1:
             raise ValueError("worker_pool_node_count must be > 0")
+        
+        task_script = worker_node_task_script
+        if task_script is None:
+            task_script = DEFAULT_SCRIPTS['worker-node-task-script']
 
         self._task_group_running_total += 1
         worker_pool_index_str = str(self._task_group_running_total).zfill(2)
         task_group_name = f"{WORKER_NODES_TASK_GROUP_NAME}-{worker_pool_index_str}"
         worker_pool_name = f"{self._cluster_name}-{worker_pool_index_str}-wrkrs"
+        
+        worker_node_environment_variables.update({
+            "CLUSTER_NAME": self._cluster_name,
+        })
 
+        task_inputs = None
+        if worker_node_task_inputs is not None:
+            task_inputs = [TaskDataInput(source, dest) for source, dest in worker_node_task_inputs.items()]
+        task_outputs = None
+        if worker_node_task_outputs is not None:
+            task_outputs = [TaskDataOutput(source, dest, True) for source, dest in worker_node_task_outputs.items()]
+            
         worker_node_worker_pool = WorkerNodeWorkerPool(
             compute_requirement_template_usage=ComputeRequirementTemplateUsage(
                 templateId=worker_node_compute_requirement_template_id,
@@ -343,8 +356,9 @@ class RayDogCluster:
                 maxNodes=worker_pool_node_count,
                 workerTag=worker_pool_name,
                 metricsEnabled=worker_node_metrics_enabled,
-                idleNodeShutdown=self._auto_shut_down,
-                idlePoolShutdown=self._auto_shut_down,
+                idleNodeShutdown=self._auto_shutdown,
+                idlePoolShutdown=self._auto_shutdown,
+                nodeBootTimeout=NODE_BOOT_TIMEOUT,
             ),
             task_group=TaskGroup(
                 name=task_group_name,
@@ -359,16 +373,19 @@ class RayDogCluster:
             ),
             task_prototype=Task(
                 taskType=TASK_TYPE,
-                taskData=worker_node_task_script,
+                taskData=task_script,
                 arguments=["taskdata.txt"],
-                environment={},
+                environment=worker_node_environment_variables,
+                data=TaskData(task_inputs, task_outputs),
                 outputs=(
                     None
                     if worker_node_capture_taskoutput is False
-                    else self._taskoutput
+                    else [TaskOutput.from_task_process()]
                 ),
             ),
         )
+        
+        worker_node_worker_pool.task_prototype.environment.update({"WORKERS_PER_NODE": workers_per_node})
 
         internal_name = (
             task_group_name
@@ -505,6 +522,45 @@ class RayDogCluster:
                 {"OBSERVABILITY_HOST": self.observability_node_private_ip}
             )
 
+        if self.enable_k3s:
+            self.k3s_worker_pool_id = (
+                self.yd_client.worker_pool_client.provision_worker_pool(
+                    self._k3s_compute_requirement_template_usage,
+                    self._k3s_provisioned_worker_pool_properties,
+                ).id
+            )
+            tgid = 2 if self.enable_observability else 1
+            self.k3s_server_task_id = (
+                self.yd_client.work_client.add_tasks_to_task_group_by_id(
+                    self._work_requirement.taskGroups[tgid].id,
+                    [self._k3s_task],
+                )[0].id
+            )
+            while True:
+                k3s_server_task = self.yd_client.work_client.get_task_by_id(
+                    self.k3s_server_task_id
+                )
+                if k3s_server_task.status == TaskStatus.EXECUTING:
+                    break
+                if (
+                    head_node_build_timeout is not None
+                    and datetime.now(timezone.utc) - start_time
+                    >= head_node_build_timeout
+                ):
+                    self.shut_down()
+                    raise TimeoutError(
+                        "Timeout waiting for observability node task to enter EXECUTING state"
+                    )
+    
+            self.k3s_server_id = k3s_server_task.workerId.replace(
+                "wrkr", "node"
+            )[:-2]
+            k3s_server: Node = self.yd_client.worker_pool_client.get_node_by_id(
+                self.k3s_server_id
+            )
+            self.k3s_server_public_ip = (k3s_server.details.publicIpAddress)
+            self.k3s_server_private_ip = (k3s_server.details.privateIpAddress)
+            self._head_node_task.environment.update({"K3S_URL": f"https://{self.k3s_server_private_ip}:6443"})
         # Add the head node task to the first task group
         self.head_node_task_id = (
             self.yd_client.work_client.add_tasks_to_task_group_by_id(
@@ -539,14 +595,13 @@ class RayDogCluster:
         for task_group_index, worker_node_worker_pool in enumerate(
             self.worker_node_worker_pools.values()
         ):
+            if self.enable_k3s:
+                task_group_index +=1
+            if self.enable_observability:
+                task_group_index +=1
+            
             self._add_tasks_to_task_group(
-                task_group_id=self._work_requirement.taskGroups[
-                    (
-                        task_group_index + 1
-                        if self.enable_observability is False
-                        else task_group_index + 2
-                    )
-                ].id,
+                task_group_id=self._work_requirement.taskGroups[task_group_index+1].id,
                 worker_node_worker_pool=worker_node_worker_pool,
             )
 
@@ -653,13 +708,12 @@ class RayDogCluster:
             )
             self.head_node_worker_pool_id = None
 
-        if (
-            self.enable_observability
-            and self.observability_node_worker_pool_id is not None
-        ):
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                self.observability_node_worker_pool_id
-            )
+        if self.enable_k3s and self.k3s_worker_pool_id is not None:
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(self.k3s_worker_pool_id)
+            self.k3s_worker_pool_id = None
+            
+        if self.enable_observability and self.observability_node_worker_pool_id is not None:
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(self.observability_node_worker_pool_id)
             self.observability_node_worker_pool_id = None
 
         for worker_node_worker_pool in self.worker_node_worker_pools.values():
@@ -681,18 +735,17 @@ class RayDogCluster:
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
         """
 
-        worker_node_worker_pool.task_prototype.environment.update(
-            {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
-        )
+        worker_node_worker_pool.task_prototype.environment.update({"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip})
+        
+        if self.enable_k3s:
+            worker_node_worker_pool.task_prototype.environment.update({"K3S_URL": f"https://{self.k3s_server_private_ip}:6443"})
+            
         if self.enable_observability:
-            worker_node_worker_pool.task_prototype.environment.update(
-                {"OBSERVABILITY_HOST": self.observability_node_private_ip}
-            )
+            worker_node_worker_pool.task_prototype.environment.update({"OBSERVABILITY_HOST": self.observability_node_private_ip})
 
+        target_instances = worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
         tasks: list[Task] = []
-        for _ in range(
-            worker_node_worker_pool.compute_requirement_template_usage.targetInstanceCount
-        ):
+        for _ in range(target_instances):
             task = copy(worker_node_worker_pool.task_prototype)
             task.name = self._next_task_name
             tasks.append(task)
@@ -706,3 +759,38 @@ class RayDogCluster:
         """
         self._task_number += 1
         return f"task-{str(self._task_number).zfill(5)}"
+        
+    def start_tunnels(self):
+        ports = []
+        tunnel_address=""
+        
+        if self.enable_k3s:
+            # Nodeport numbers in the 30k range allocated as per scripts/k3s/manifests/ray-head.yaml
+            ports.append(("localhost", 10001, "localhost", 30001))
+            ports.append(("localhost", 8265, "localhost", 30002))
+            ports.append(("localhost", 6379, "localhost", 30003))
+            # Nodeport numbers in the 30k range allocated as per scripts/k3s/manifests/kube-prometheus-stack.yaml
+            ports.append(("localhost", 3000, "localhost", 30030))
+            ports.append(("localhost", 9090, "localhost", 30090))
+            tunnel_address = self.k3s_server_public_ip
+        else:
+            ports.append(("localhost", 10001, "localhost", 10001))
+            ports.append(("localhost", 8265, "localhost", 8265))
+            ports.append(("localhost", 6379, "localhost", 6379))
+            if self.enable_observability:
+                ports.append(("localhost", 3000, str(self.observability_node_private_ip), 3000))
+                ports.append(("localhost", 9090, str(self.observability_node_private_ip), 9090))
+            tunnel_address = str(self.head_node_public_ip)
+                
+        self._ssh_tunnels = RayTunnels(
+            ray_head_ip_address=tunnel_address,
+            ssh_user="yd-agent",
+            private_key_file="private-key",
+            ray_tunnel_specs=[SSHTunnelSpec(*p) for p in ports]
+        )
+        self._ssh_tunnels.start_tunnels()
+    
+    def stop_tunnels(self):
+        if self._ssh_tunnels is not None:
+            self._ssh_tunnels.stop_tunnels()
+        

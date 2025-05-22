@@ -12,4 +12,4 @@ fi
 
 VENV=/opt/yellowdog/agent/venv
 source $VENV/bin/activate
-ray start $RAY_ARGS
+ray start $RAY_ARGS --num-cpus=1

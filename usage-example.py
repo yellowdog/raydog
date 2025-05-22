@@ -31,6 +31,11 @@ for name, script_path in SCRIPT_PATHS.items():
 
 IMAGES_ID = "ami-0fef583e486727263"  # Ubuntu 22.04, AMD64, eu-west-2
 
+MY_USERNAME = "jsm"  # Note; Match YD naming rules, lower case, etc.
+WORKER_NODES_PER_POOL = 500  # Must be <= 1500, assuming split across 3 AZs
+NUM_WORKER_POOLS = 2
+TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
+BATCHES_PER_NODE=10
 
 def main():
     timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
@@ -79,14 +84,12 @@ def main():
         )
         print(f"Head node started at public IP: '{public_ip}'")
 
-        print("Setting up SSH tunnels for Ray client and dashboard to Ray head node")
-        raydog_tunnels = RayTunnels(
-            ray_head_ip_address=public_ip,
-            ssh_user="yd-agent",
-            private_key_file="private-key",
-        )
-        raydog_tunnels.start_tunnels()
-        cluster_address = "ray://localhost:10001"
+        cluster_address = f"ray://localhost:10001"
+        print(f"Head node started: {cluster_address}")
+        
+        print("Waiting for Ray services to start...")
+        sleep(20)
+        raydog_cluster.start_tunnels()
 
         print("Pausing to allow all worker nodes to start")
         sleep(90)
@@ -99,13 +102,11 @@ def main():
         input("Hit enter to shut down cluster ")
 
     finally:
-        # Make sure the Ray cluster and tunnels get shut down
+        # Make sure the Ray cluster gets shut down, and the SSH tunnels stopped
         if raydog_cluster is not None:
             print("Shutting down Ray cluster")
             raydog_cluster.shut_down()
-        if raydog_tunnels is not None:
-            print("Shutting down Ray SSH tunnels")
-            raydog_tunnels.stop_tunnels()
+            raydog_cluster.stop_tunnels()
 
 
 # simple Ray example

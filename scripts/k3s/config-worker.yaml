@@ -1,0 +1,4 @@
+node-label:
+    - "ray.io/worker=true"
+node-taint:
+    - "ray.io/worker=true:NoSchedule"
