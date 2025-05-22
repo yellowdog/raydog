@@ -1,0 +1,23 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: kube-prometheus
+  namespace: kube-system
+spec:
+  repo: https://prometheus-community.github.io/helm-charts
+  chart: kube-prometheus-stack
+  targetNamespace: kube-prometheus
+  createNamespace: true
+  valuesContent: |-
+    nodeExporter:
+      enabled: false
+    grafana:
+      service:
+        type: NodePort
+        nodePort: 30030
+    prometheus:
+      service:
+        type: NodePort
+        nodePort: 30090
+      prometheusSpec:
+        enableRemoteWriteReceiver: true

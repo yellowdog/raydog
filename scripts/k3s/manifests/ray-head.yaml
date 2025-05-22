@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  labels:
+    app: valkey
+spec:
+  type: ClusterIP
+  ports:
+    - name: valkey
+      port: 6379
+  selector:
+    app: valkey
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  labels:
+    app: valkey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      tolerations:
+        - key: ray.io/head
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        ray.io/head: "true"
+      containers:
+        - name: valkey
+          image: bitnami/valkey:8.1.1
+          ports:
+            - containerPort: 6379
+          env:
+            - name: ALLOW_EMPTY_PASSWORD
+              value: "true"
+---
+# Ray head node service, allowing worker pods to discover the head node to perform the bidirectional communication.
+# More contexts can be found at [the Ports configurations doc](https://docs.ray.io/en/latest/ray-core/configure.html#ports-configurations).
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-head
+  labels:
+    app: ray-head
+spec:
+  type: NodePort
+  ports:
+    - name: client
+      protocol: TCP
+      port: 10001
+      targetPort: 10001
+      nodePort: 30001
+    - name: dashboard
+      protocol: TCP
+      port: 8265
+      targetPort: 8265
+      nodePort: 30002
+    - name: gcs-server
+      protocol: TCP
+      port: 6380
+      targetPort: 6380
+      nodePort: 30003
+  selector:
+    app: ray-head
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-head
+  labels:
+    app: ray-head
+spec:
+  # Do not change this - Ray currently only supports one head node per cluster.
+  replicas: 1
+  selector:
+    matchLabels:
+      component: ray-head
+      type: ray
+      app: ray-head
+      ray-role: head
+  template:
+    metadata:
+      labels:
+        component: ray-head
+        type: ray
+        app: ray-head
+        ray-role: head
+    spec:
+      tolerations:
+        - key: ray.io/head
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        ray.io/head: "true"
+      # If the head node goes down, the entire cluster (including all worker
+      # nodes) will go down as well. If you want Kubernetes to bring up a new
+      # head node in this case, set this to "Always," else set it to "Never."
+      restartPolicy: Always
+
+      # This volume allocates shared memory for Ray to use for its plasma
+      # object store. If you do not provide this, Ray will fall back to
+      # /tmp which cause slowdowns if it's not a shared memory volume.
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+      containers:
+        - name: ray-head
+          image: bitnami/ray:2.45.0
+          imagePullPolicy: Always
+          command:
+            - /opt/bitnami/python/bin/ray
+          # if there is no password for Redis, set --redis-password=''
+          args:
+            - start
+            - --head
+            - --port=6380
+            - --num-cpus=0
+            - --dashboard-host=0.0.0.0 
+            - --object-manager-port=8076 
+            - --node-manager-port=8077
+            - --metrics-export-port=8080
+            - --dashboard-agent-grpc-port=8078
+            - --dashboard-agent-listen-port=52365
+            - --block
+          ports:
+            - containerPort: 6380 # GCS server
+            - containerPort: 10001 # Used by Ray Client
+            - containerPort: 8265 # Used by Ray Dashboard
+            - name: metrics
+              containerPort: 8080
+          # This volume allocates shared memory for Ray to use for its plasma
+          # object store. If you do not provide this, Ray will fall back to
+          # /tmp which cause slowdowns if it's not a shared memory volume.
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            # RAY_REDIS_ADDRESS lets ray use external Redis for fault tolerance
+            - name: RAY_REDIS_ADDRESS
+              value: valkey:6379
+            - name: RAY_GRAFANA_HOST
+              value: http://kube-prometheus-grafana.kube-prometheus:80
+            - name: RAY_GRAFANA_IFRAME_HOST
+              value: http://localhost:3000
+            - name: RAY_PROMETHEUS_HOST
+              value: http://kube-prometheus-kube-prome-prometheus.kube-prometheus:9090

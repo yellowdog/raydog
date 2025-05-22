@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-workers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      ray-role: worker
+  template:
+    metadata:
+      labels:
+        ray-role: worker
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              ray.io/workers: "true"
+      nodeSelector:
+        ray.io/worker: "true"
+      tolerations:
+        - key: ray.io/worker
+          operator: Exists
+          effect: NoSchedule
+      restartPolicy: Always
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+      containers:
+        - name: ray-worker
+          image: bitnami/ray:2.45.0
+          imagePullPolicy: IfNotPresent
+          command: 
+            - /opt/bitnami/python/bin/ray
+          args:
+            - start 
+            - --num-cpus=1
+            - --address=ray-head:6380
+            - --object-manager-port=8076
+            - --node-manager-port=8077
+            - --metrics-export-port=8080
+            - --dashboard-agent-grpc-port=8078
+            - --dashboard-agent-listen-port=52365
+            - --block
+          ports:
+            - name: metrics
+              containerPort: 8080
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          resources:
+            limits:
+              memory: 2Gi
+            requests:
+              cpu: 100m
+              memory: 1Gi
