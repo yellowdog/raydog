@@ -40,7 +40,6 @@ from yellowdog_client.platform_client import PlatformClient
 TASK_TYPE = "bash"
 
 HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
-IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES = 10.0
 
 TAG_SERVER_PORT = 16667
 
@@ -316,6 +315,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         logger.debug(f"terminate_node {node_id}")
         self._raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
         self._tag_store.update_tags(node_id, {"terminated": "true"})
+        #TODO: can we delete the tags for terminated nodes, without creating sync issues?
 
     def terminate_nodes(self, node_ids: List[str]) -> Optional[Dict[str, Any]]:
         """Terminates a set of nodes."""
@@ -472,7 +472,7 @@ class TagStore:
                     node_id = key.removeprefix(prefix)
                     tags = self._redis.hgetall(key)
 
-                    logger.debug(f"Tags for {node_id} {tags}")
+                    #logger.debug(f"Tags for {node_id} {tags}")
                     self._update_tags(node_id, tags)
 
                 if not cur:
@@ -553,8 +553,15 @@ class AutoRayDog:
             instanceTags=None,
         )
 
-        auto_shut_down = AutoShutdown(
-            enabled=True, timeout=timedelta(minutes=IDLE_NODE_AND_POOL_SHUTDOWN_MINUTES)
+        # Timeouts for worker pools
+        # Idle nodes should shut down quickly, because Ray will have already left it a while before de-allocating them
+        # Unused worker pools should stay alive for a long time, so that the autoscaler can re-awaken them
+        node_auto_shut_down = AutoShutdown(
+            enabled=True, timeout=timedelta(minutes=4)
+        )
+
+        pool_auto_shut_down = AutoShutdown(
+            enabled=True, timeout=timedelta(minutes=120)
         )
 
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
@@ -563,8 +570,8 @@ class AutoRayDog:
             maxNodes=node_config.get("max_nodes", 1000),
             workerTag=flavour,
             metricsEnabled=metrics_enabled,
-            idleNodeShutdown=auto_shut_down,
-            idlePoolShutdown=auto_shut_down,
+            idleNodeShutdown=node_auto_shut_down,
+            idlePoolShutdown=pool_auto_shut_down,
         )
 
         worker_pool: WorkerPool = (
