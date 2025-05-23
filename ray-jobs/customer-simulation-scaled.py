@@ -8,30 +8,39 @@ import ray
 # Scale the workload
 TASK_COUNT_SCALING_FACTOR = 100  # Factor by which to reduce the number of tasks
 TASK_DURATION_REDUCTION_FACTOR = 10000  # Factor by which to reduce the task duration
-TASK_NUM_CPUS = 1  # Set the required CPU count per task
+TASK_NUM_CPUS = 1  # Set the required CPU count per task (used by Ray only)
 
 
-def scaled_count(task_count: int) -> int:
+def scaled_task_count(task_count: int) -> int:
     """
     Reduce the number of tasks by a scaling factor.
     """
-    # Minimum task count is 20
-    return max(20, task_count // TASK_COUNT_SCALING_FACTOR)
+    return int(task_count // TASK_COUNT_SCALING_FACTOR)
 
 
 def create_array_with_mean_max(mean_value, max_value, size):
-    # Size must be >= 20
-    # Choose a random number of elements to be max_value
-    n_max = np.random.randint(1, size // 10)  # Ensure at least 1 but not more than 10%.
 
-    # Generate random numbers between 0 and 1 for the remaining elements
-    random_numbers = np.random.rand(size - n_max)
+    size = max(20, size)  # Minimum size for n_max calculation to work
+    while True:  # Loop ensures that 'mean_value * size - n_max * max_value' is > 0
 
-    # Calculate the target sum for the remaining elements
-    # The sum of all elements should be: mean * size
-    # Since n_max elements are fixed as max_value, the sum of the remaining
-    # elements should be: mean * size - n_max * max_value
-    target_sum = mean_value * size - n_max * max_value
+        # Choose a random number of elements to be max_value
+        n_max = np.random.randint(
+            1, size // 10
+        )  # Ensure at least 1 but not more than 10%.
+
+        # Generate random numbers between 0 and 1 for the remaining elements
+        random_numbers = np.random.rand(size - n_max)
+
+        # Calculate the target sum for the remaining elements
+        # The sum of all elements should be: mean * size
+        # Since n_max elements are fixed as max_value, the sum of the remaining
+        # elements should be: mean * size - n_max * max_value
+        target_sum = mean_value * size - n_max * max_value
+
+        if target_sum >= 0:
+            break
+
+        size += 20  # Bump the size and try again
 
     # Scale the random numbers to match the target sum
     current_sum = np.sum(random_numbers)
@@ -48,75 +57,76 @@ def create_array_with_mean_max(mean_value, max_value, size):
 
 @ray.remote(num_cpus=TASK_NUM_CPUS)
 def task(minutes):
-    try:
-        time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
-    except:
-        time.sleep(0.1)
+    time.sleep(minutes * 60 / TASK_DURATION_REDUCTION_FACTOR)
 
 
 def run_group_a1():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(10.2, 30, scaled_count(45200))
+        for m in create_array_with_mean_max(10.2, 30, scaled_task_count(45200))
     ]
 
 
 def run_group_a2():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(0.72, 10, scaled_count(14000))
+        for m in create_array_with_mean_max(0.72, 10, scaled_task_count(14000))
     ]
 
 
 def run_group_a3():
     return [
-        task.remote(m) for m in create_array_with_mean_max(0.67, 2, scaled_count(1080))
+        task.remote(m)
+        for m in create_array_with_mean_max(0.67, 2, scaled_task_count(1080))
     ]
 
 
 def run_group_b1():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(17.2, 60, scaled_count(30100))
+        for m in create_array_with_mean_max(17.2, 60, scaled_task_count(30100))
     ]
 
 
 def run_group_b2():
     return [
-        task.remote(m) for m in create_array_with_mean_max(0.74, 20, scaled_count(4680))
+        task.remote(m)
+        for m in create_array_with_mean_max(0.74, 20, scaled_task_count(4680))
     ]
 
 
 def run_group_c():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(1.08, 30, scaled_count(31700))
+        for m in create_array_with_mean_max(1.08, 30, scaled_task_count(31700))
     ]
 
 
 def run_group_e():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(3.59, 360, scaled_count(9360))
+        for m in create_array_with_mean_max(3.59, 360, scaled_task_count(9360))
     ]
 
 
 def run_group_f():
     return [
         task.remote(m)
-        for m in create_array_with_mean_max(3.08, 120, scaled_count(4680))
+        for m in create_array_with_mean_max(3.08, 120, scaled_task_count(4680))
     ]
 
 
 def run_group_g():
     return [
-        task.remote(m) for m in create_array_with_mean_max(0.5, 5, scaled_count(4140))
+        task.remote(m)
+        for m in create_array_with_mean_max(0.5, 5, scaled_task_count(4140))
     ]
 
 
 def run_group_h():
     return [
-        task.remote(m) for m in create_array_with_mean_max(3.14, 45, scaled_count(1610))
+        task.remote(m)
+        for m in create_array_with_mean_max(3.14, 45, scaled_task_count(1610))
     ]
 
 
