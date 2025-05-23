@@ -11,6 +11,11 @@ if [ ! -e $VENV ] ; then
 
     echo "Installing pip dependencies"
     $VENV/bin/python3 -m pip install -e $HERE/..
+
+    echo "Adding RayDoy to the Ray script"
+    RAYFILE=$VENV/bin/ray 
+    cp $RAYFILE $RAYFILE.bak
+    awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
 fi
 
 echo "Activating venv"

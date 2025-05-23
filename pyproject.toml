@@ -2,9 +2,15 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = [ "raydog" ]
+
 [project]
 name = "raydog"
 version = "1.0.0"
 dependencies = [
     "yellowdog-sdk>=9.1.0",
+    "sshtunnel",
+    "ray", 
+    "ray[client]"
 ]
