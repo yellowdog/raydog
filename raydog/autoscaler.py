@@ -533,7 +533,7 @@ class AutoRayDog:
         userdata: str,
         metrics_enabled: bool = True,
     ) -> None:
-        """Create a new worker pool for this type of node"""
+        """Create a new worker pool for the given type of node"""
 
         logger.debug(f"create_worker_pool {flavour}")
 
@@ -553,15 +553,9 @@ class AutoRayDog:
             instanceTags=None,
         )
 
-        # Timeouts for worker pools
-        # Idle nodes should shut down quickly, because Ray will have already left it a while before de-allocating them
-        # Unused worker pools should stay alive for a long time, so that the autoscaler can re-awaken them
         node_auto_shut_down = AutoShutdown(
+            # shut down quickly, because Ray will have waited before terminating nodes
             enabled=True, timeout=timedelta(minutes=4)
-        )
-
-        pool_auto_shut_down = AutoShutdown(
-            enabled=True, timeout=timedelta(minutes=120)
         )
 
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
@@ -571,7 +565,7 @@ class AutoRayDog:
             workerTag=flavour,
             metricsEnabled=metrics_enabled,
             idleNodeShutdown=node_auto_shut_down,
-            idlePoolShutdown=pool_auto_shut_down,
+            idlePoolShutdown=None,
         )
 
         worker_pool: WorkerPool = (
