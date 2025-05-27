@@ -21,13 +21,18 @@ for ITEM in README.md \
             usage-example.py \
             raydog \
             private-key \
-            jupyter-demo.ipynb \
             scripts \
             utils \
             CHANGELOG.txt
 do
   cp -r $ITEM $DIST/$RAYDOG/.
 done
+
+# Temporarily exclude the autoscaler
+rm -rf $DIST/$RAYDOG/raydog/autoscaler.py
+
+# Kill macOS detritus
+rm -rf $(find . -name '.DS_Store')
 
 chmod 0600 $DIST/$RAYDOG/private-key
 

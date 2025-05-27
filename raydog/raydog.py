@@ -758,7 +758,7 @@ class RayDogCluster:
 
 class RayDogClusterProxy:
     """
-    A proxy for a RayDog cluster, allowing frozen cluster state to
+    A proxy for a RayDog cluster, allowing saved cluster state to
     be imported, and the cluster to be shut down.
     """
 
