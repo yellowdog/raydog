@@ -74,3 +74,39 @@ The `RayTunnels` class depends on the `sshtunnel` package.
 An **observability node** can optionally be added to the RayDog cluster, hosting Prometheus and Grafana to supply information to the Ray dashboard. The node is added by setting the `RayDogCluster` constructor argument `enable_observability` to `True`, supplying the required values for instance provisioning, and for the task script that starts up the required observability processes.
 
 The private IP address of the observability node is available in the `OBSERVABILITY_HOST` environment variable supplied to the head node task and the worker node tasks, and this can be used to set up the required observability connections.
+
+## Saving Cluster State to Allow Subsequent Cluster Shutdown
+
+When a running RayDog cluster has been built, it's possible to save the essential state required to shut down the cluster later.
+
+The `RayDogCluster` object has methods `save_state_to_json()` and `save_state_to_json_file(file_name)` to handle this. The former returns a JSON string.
+
+The contents of the saved state are (e.g.):
+
+```json
+{
+  "cluster_name": "ray-prod-1748357565-702532",
+  "cluster_namespace": "my-ray-namespace",
+  "cluster_tag": "my-ray-production",
+  "work_requirement_id": "ydid:workreq:000000:5d82a2dd-9bdd-4b3b-8ec8-ca9b4cd656b6",
+  "worker_pool_ids": [
+    "ydid:wrkrpool:000000:60a9b7cb-0c7c-4155-9ca6-68e92d99352a",
+    "ydid:wrkrpool:000000:d9229bdc-bb77-41eb-9e84-fa60bb130e01"
+  ]
+}
+```
+
+(Only the `work_requirement_id` and `worker_pool_ids` properties are used; the other properties are for information only.)
+
+To use the saved state:
+
+1. Instantiate an object of class `RayDogClusterProxy`, supplying the YellowDog Application Key ID and Secret
+2. Load the saved state using one of the `load_saved_state_from_json()` or `load_saved_state_from_json_file()` methods
+3. Invoke the `shut_down()` method; this will cancel the work requirement (aborting any running tasks) and shut down all worker pools
+
+### Caveats
+
+This feature must be used with caution:
+
+1. Only save the state for a RayDog cluster that has already built, and note that any subsequent changes (adding or removing worker pools) will not be reflected in existing saved state
+2. When loading state into a `RayDogClusterProxy` object the cluster state may now be invalid and the `shut_down()` method will throw exceptions if asked to operate on a stale work requirement or worker pools.
