@@ -698,10 +698,10 @@ class RayDogCluster:
         cluster shut down operation, using the RayDogClusterProxy class.
         """
         if not self._is_built:
-            raise Exception("Cannot freeze state on a cluster that is not yet built")
+            raise Exception("Cannot save state on a cluster that is not yet built")
 
         if self._is_shut_down:
-            raise Exception("Cannot freeze state on a cluster that is shut down")
+            raise Exception("Cannot save state on a cluster that is shut down")
 
         return {
             CLUSTER_NAME_STR: self._cluster_name,
