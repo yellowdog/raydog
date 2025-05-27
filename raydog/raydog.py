@@ -2,6 +2,7 @@
 Build a Ray cluster using YellowDog.
 """
 
+import json
 from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,13 @@ TASK_TYPE = "bash"
 
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10)
 IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT = timedelta(minutes=3)
+
+# String constants for use when saving cluster state
+CLUSTER_NAME_STR = "cluster_name"
+CLUSTER_NAMESPACE_STR = "cluster_namespace"
+CLUSTER_TAG_STR = "cluster_tag"
+WORK_REQUIREMENT_ID_STR = "work_requirement_id"
+WORKER_POOL_IDS_STR = "worker_pool_ids"
 
 
 @dataclass
@@ -671,6 +679,46 @@ class RayDogCluster:
 
         self._is_shut_down = True
 
+    def save_state_to_json(self) -> str:
+        """
+        Capture cluster state as a JSON string.
+        """
+        return json.dumps(self._save_state(), indent=2)
+
+    def save_state_to_json_file(self, file_name: str):
+        """
+        Capture cluster state to a file in JSON format.
+        """
+        with open(file_name, "w") as f:
+            json.dump(self._save_state(), f, indent=2)
+
+    def _save_state(self) -> dict:
+        """
+        Capture the state of the RayDog cluster to allow for a subsequent
+        cluster shut down operation, using the RayDogClusterProxy class.
+        """
+        if not self._is_built:
+            raise Exception("Cannot freeze state on a cluster that is not yet built")
+
+        if self._is_shut_down:
+            raise Exception("Cannot freeze state on a cluster that is shut down")
+
+        return {
+            CLUSTER_NAME_STR: self._cluster_name,
+            CLUSTER_NAMESPACE_STR: self._cluster_namespace,
+            CLUSTER_TAG_STR: self._cluster_tag,
+            WORK_REQUIREMENT_ID_STR: self.work_requirement_id,
+            WORKER_POOL_IDS_STR: (
+                self.worker_pool_ids
+                + [self.head_node_worker_pool_id]
+                + (
+                    [self.observability_node_worker_pool_id]
+                    if self.enable_observability is True
+                    else []
+                )
+            ),
+        }
+
     def _add_tasks_to_task_group(
         self, task_group_id: str, worker_node_worker_pool: WorkerNodeWorkerPool
     ):
@@ -706,3 +754,84 @@ class RayDogCluster:
         """
         self._task_number += 1
         return f"task-{str(self._task_number).zfill(5)}"
+
+
+class RayDogClusterProxy:
+    """
+    A proxy for a RayDog cluster, allowing frozen cluster state to
+    be imported, and the cluster to be shut down.
+    """
+
+    def __init__(
+        self,
+        yd_application_key_id: str,
+        yd_application_key_secret: str,
+        yd_platform_api_url: str = YD_DEFAULT_API_URL,
+    ):
+        """
+        Class representing a proxy of a RayDog cluster to allow cluster shutdown
+        based on minimal cluster state.
+
+        :param yd_application_key_id: the key ID of the YellowDog application for connecting
+            to the YellowDog platform.
+        :param yd_application_key_secret: the key secret of the YellowDog application.
+        :param yd_platform_api_url: the URL of the YellowDog platform API.
+        """
+        self.yd_client = PlatformClient.create(
+            ServicesSchema(defaultUrl=yd_platform_api_url),
+            ApiKey(id=yd_application_key_id, secret=yd_application_key_secret),
+        )
+        self._cluster_state: dict | None = None
+        self._is_shut_down = False
+
+    def load_saved_state_from_json(self, cluster_state: str):
+        """
+        Load the cluster state from a JSON string.
+
+        :param cluster_state: the state of a RayDog cluster as a JSON string
+        """
+        self._cluster_state = json.loads(cluster_state)
+
+    def load_saved_state_from_json_file(self, file_name: str):
+        """
+        Load the cluster state from a JSON file.
+
+        :param file_name: the JSON file containing cluster state.
+        """
+        with open(file_name, "r") as f:
+            self._cluster_state = json.load(f)
+
+    def shut_down(self):
+        """
+        Shut down the RayDog cluster.
+        """
+        if self._cluster_state is None:
+            raise Exception("Cannot shut down cluster with no cluster state")
+
+        if self._is_shut_down is True:
+            raise Exception("Cluster already shut down")
+
+        self._is_shut_down = True  # Set it here to avoid re-running
+
+        if (
+            work_requirement_id := self._cluster_state.get(WORK_REQUIREMENT_ID_STR)
+        ) is not None:
+            try:
+                self.yd_client.work_client.cancel_work_requirement_by_id(
+                    work_requirement_id, abort=True
+                )
+            except HTTPError as e:
+                if "InvalidWorkRequirementStatusException" in str(e):
+                    pass  # Suppress exception if it's just a state transition error
+        else:
+            raise Exception("No work requirement ID specified")
+
+        if (
+            worker_pool_ids := self._cluster_state.get(WORKER_POOL_IDS_STR)
+        ) is not None:
+            for worker_pool_id in worker_pool_ids:
+                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                    worker_pool_id
+                )
+        else:
+            raise Exception("No worker pool IDs specified")
