@@ -54,18 +54,24 @@ A default [userdata script](scripts/node-setup-userdata.sh) is also supplied tha
 
 ### User-Supplied Scripts
 
-To use your own Bash task scripts, please ensure that an EXIT trap is set that stops Ray gracefully, e.g.:
+To use your own Bash task scripts, there are three requirements:
+
+1. ensure that an EXIT trap is set that stops Ray gracefully, e.g.:
 ```bash
 trap "ray stop; echo Ray stopped" EXIT
 ```
 
-When Ray is started on either the head node or worker nodes, use the `--block` option with the `ray start` command, to ensure the YellowDog task lifecycle matches that of the Ray processes.
 
-For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable `RAY_HEAD_NODE_PRIVATE_IP`.
+2. When Ray is started on either the head node or worker nodes, use the `--block` option with the `ray start` command, to ensure the YellowDog task lifecycle matches that of the Ray processes.
+
+
+3. For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable `RAY_HEAD_NODE_PRIVATE_IP`. For example, use the command line option `--address=$RAY_HEAD_NODE_PRIVATE_IP:6379` when starting the Ray processes.
 
 ## Creating SSH Tunnels for the Ray client, dashboard, etc.
 
 The utility class [`RayTunnels`](utils/ray_ssh_tunnels.py) allows SSH tunnels to be created using a local private key to SSH to the public IP of the Ray head node. The class is also used for establishing the required tunnels if observability is used. The client, etc., can then be accessed using, e.g., `localhost:10001`.
+
+By default, tunnels are set up for the client on port `10001`, and the Ray dashboard on port `8265`.
 
 The `RayTunnels` class depends on the `sshtunnel` package.
 
@@ -75,11 +81,13 @@ An **observability node** can optionally be added to the RayDog cluster, hosting
 
 The private IP address of the observability node is available in the `OBSERVABILITY_HOST` environment variable supplied to the head node task and the worker node tasks, and this can be used to set up the required observability connections.
 
-## Saving Cluster State to Allow Subsequent Cluster Shutdown
+## Saving Cluster State to Allow Later Cluster Shutdown
 
 When a running RayDog cluster has been built, it's possible to save the essential state required to shut down the cluster later.
 
-The `RayDogCluster` object has methods `save_state_to_json()` and `save_state_to_json_file(file_name)` to handle this. The former returns a JSON string.
+### Saving the Cluster State
+
+The `RayDogCluster` object has methods `save_state_to_json()`, which returns a JSON string, and `save_state_to_json_file(file_name)` which writes the JSON state to the nominated file. These should be used only after the `build()` method has been invoked, when the required IDs are known.
 
 The contents of the saved state are (e.g.):
 
@@ -88,21 +96,25 @@ The contents of the saved state are (e.g.):
   "cluster_name": "ray-prod-1748357565-702532",
   "cluster_namespace": "my-ray-namespace",
   "cluster_tag": "my-ray-production",
-  "work_requirement_id": "ydid:workreq:000000:5d82a2dd-9bdd-4b3b-8ec8-ca9b4cd656b6",
+  "work_requirement_id": "ydid:workreq:000000:9d12fec4-faf2-4e8f-a179-80e5d8729276",
   "worker_pool_ids": [
-    "ydid:wrkrpool:000000:60a9b7cb-0c7c-4155-9ca6-68e92d99352a",
-    "ydid:wrkrpool:000000:d9229bdc-bb77-41eb-9e84-fa60bb130e01"
+    "ydid:wrkrpool:000000:d66bb53e-b3da-4df4-961c-204a0195e981",
+    "ydid:wrkrpool:000000:b957728f-0b5d-49b7-a45d-f97aa450bb5e",
+    "ydid:wrkrpool:000000:572fd46d-9c4c-4274-90c7-dcd5d95a52ba",
+    "ydid:wrkrpool:000000:a5317856-182f-4d46-a64a-95549cbdf30a"
   ]
 }
 ```
 
-(Only the `work_requirement_id` and `worker_pool_ids` properties are used; the other properties are for information only.)
+Only the `work_requirement_id` and `worker_pool_ids` properties are used; the other properties are for information only.
+
+### Usage
 
 To use the saved state:
 
-1. Instantiate an object of class `RayDogClusterProxy`, supplying the YellowDog Application Key ID and Secret
-2. Load the saved state using one of the `load_saved_state_from_json()` or `load_saved_state_from_json_file()` methods
-3. Invoke the `shut_down()` method; this will cancel the work requirement (aborting any running tasks) and shut down all worker pools
+1. Instantiate an object of class `RayDogClusterProxy`, supplying the YellowDog Application Key ID and Secret to authenticate with the platform
+2. Load the saved state using one of the methods `load_saved_state_from_json()`, supplying a JSON string as the argument, or `load_saved_state_from_json_file()`, supplying the name of a file containing JSON content as the argument
+3. Invoke the `shut_down()` method; this will cancel the work requirement (aborting executing tasks) and shut down all worker pools
 
 ### Caveats
 
