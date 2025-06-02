@@ -83,7 +83,6 @@ def main():
             observability_node_images_id=AMI,
             observability_node_metrics_enabled=True,
             observability_node_userdata=USERDATA,
-            head_node_capture_taskoutput=True,
             observability_node_capture_taskoutput=True,
             observability_node_start_script=DEFAULT_SCRIPTS[
                 "observability-node-task-script"
@@ -101,7 +100,6 @@ def main():
                 worker_node_metrics_enabled=True,
                 worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
                 worker_node_userdata=USERDATA,
-                worker_node_capture_taskoutput=True,
             )
 
         # Build the Ray cluster
