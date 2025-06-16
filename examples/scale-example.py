@@ -6,7 +6,7 @@
 #       should be 1,500 (500 instances per AZ)
 
 WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
-NUM_WORKER_POOLS = 1
+NUM_WORKER_POOLS = 2
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
 # Sleep duration for each Ray task in the test job
