@@ -53,8 +53,8 @@ pypi-check-build: clean build
 pypi-test-upload: clean build
 	python -m twine upload --repository yellowdog-testpypi dist/*
 
-#pypi-prod-upload: clean build
-#	python -m twine upload --repository yellowdog-ray dist/*
+pypi-prod-upload: clean build
+	python -m twine upload --repository yellowdog-ray dist/*
 
 no_op:
 	# Available targets are: build, clean, install, uninstall, format, update, docs,
