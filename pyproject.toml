@@ -1,16 +1,35 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = [ "raydog" ]
+    requires = ["setuptools>=61.0", "wheel"]
+    build-backend = "setuptools.build_meta"
 
 [project]
-name = "raydog"
-version = "1.0.0"
-dependencies = [
-    "yellowdog-sdk>=9.1.0",
-    "sshtunnel",
-    "ray", 
-    "ray[client]"
-]
+    name = "yellowdog-ray"
+    description = "RayDog: YellowDog Integration with Ray."
+    classifiers = [
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Operating System :: OS Independent",
+        "Development Status :: 4 - Beta",
+    ]
+    requires-python = ">= 3.10, < 3.13"
+    dynamic = ["dependencies", "version"]
+    license = "Apache-2.0"
+
+[[project.authors]]
+    name = "YellowDog Limited"
+    email = "support@yellowdog.co"
+
+[project.urls]
+    Homepage = "https://github.com/yellowdog/raydog"
+    Source = "https://github.com/yellowdog/raydog"
+
+[tool.setuptools.dynamic.version]
+    attr = "yellowdog_ray.__version__"
+
+[tool.setuptools.dynamic.dependencies]
+    file = ["requirements.txt"]
+
+[project.readme]
+    file = "PYPI_README.md"
+    content-type = "text/markdown"

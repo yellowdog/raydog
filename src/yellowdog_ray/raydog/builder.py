@@ -798,7 +798,7 @@ class RayDogClusterProxy:
 
         :param file_name: the JSON file containing cluster state.
         """
-        with open(file_name, "r") as f:
+        with open(file_name) as f:
             self._cluster_state = json.load(f)
 
     def shut_down(self):

@@ -10,8 +10,8 @@ from time import sleep
 import dotenv
 import ray
 
-from raydog.raydog import RayDogCluster
-from utils.ray_ssh_tunnels import RayTunnels
+from yellowdog_ray.raydog.builder import RayDogCluster
+from yellowdog_ray.utils.ray_ssh_tunnels import RayTunnels
 
 NUM_WORKER_POOLS = 2
 NODES_PER_WORKER_POOL = 2
@@ -19,14 +19,15 @@ TOTAL_WORKER_NODES = NUM_WORKER_POOLS * NODES_PER_WORKER_POOL
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
+SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts")
 SCRIPT_PATHS = {
-    "node-setup-userdata": "scripts/node-setup-userdata.sh",
-    "head-node-task-script": "scripts/head-node-task-script.sh",
-    "worker-node-task-script": "scripts/worker-node-task-script.sh",
+    "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
+    "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
+    "worker-node-task-script": f"{SCRIPTS_DIR}/worker-node-task-script.sh",
 }
 DEFAULT_SCRIPTS = {}
 for name, script_path in SCRIPT_PATHS.items():
-    with open(path.join(CURRENT_DIR, script_path), "r") as file:
+    with open(path.join(CURRENT_DIR, script_path)) as file:
         DEFAULT_SCRIPTS[name] = file.read()
 
 IMAGES_ID = "ami-0fef583e486727263"  # Ubuntu 22.04, AMD64, eu-west-2
@@ -83,7 +84,7 @@ def main():
         raydog_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file="private-key",
+            private_key_file=f"{SCRIPTS_DIR}/private-key",
         )
         raydog_tunnels.start_tunnels()
         cluster_address = "ray://localhost:10001"

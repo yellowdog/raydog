@@ -23,8 +23,8 @@ from os import getenv, path
 import dotenv
 import ray
 
-from raydog.raydog import RayDogCluster
-from utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
+from yellowdog_ray.raydog.builder import RayDogCluster
+from yellowdog_ray.utils.ray_ssh_tunnels import RayTunnels, SSHTunnelSpec
 
 try:
     USERNAME = getuser().replace(" ", "_").lower()
@@ -33,15 +33,18 @@ except:
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
+SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts")
 SCRIPT_PATHS = {
-    "node-setup-userdata": "scripts/node-setup-userdata.sh",
-    "head-node-task-script": "scripts/head-node-task-script.sh",
-    "worker-node-task-script": "scripts/worker-node-task-script.sh",
-    "observability-node-task-script": "scripts/observability-node-task-script.sh",
+    "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
+    "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
+    "worker-node-task-script": f"{SCRIPTS_DIR}/worker-node-task-script.sh",
+    "observability-node-task-script": (
+        f"{SCRIPTS_DIR}/observability-node-task-script.sh"
+    ),
 }
 DEFAULT_SCRIPTS = {}
 for name, script_path in SCRIPT_PATHS.items():
-    with open(path.join(CURRENT_DIR, script_path), "r") as file:
+    with open(path.join(CURRENT_DIR, script_path)) as file:
         DEFAULT_SCRIPTS[name] = file.read()
 
 # Node boot setup
@@ -139,7 +142,7 @@ def main():
         ssh_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file="private-key",
+            private_key_file=f"{SCRIPTS_DIR}/private-key",
             ray_tunnel_specs=tunnels,
         )
         ssh_tunnels.start_tunnels()
@@ -166,7 +169,7 @@ def main():
         input("Hit enter to shut down cluster: ")
 
     finally:
-        # Make sure the Ray cluster gets shut down, and the SSH tunnels stopped
+        # Make sure the Ray cluster gets shut down, and the SSH tunnels are stopped
         if raydog_cluster is not None:
             print("Shutting down Ray cluster")
             raydog_cluster.shut_down()

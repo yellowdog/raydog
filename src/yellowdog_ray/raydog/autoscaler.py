@@ -5,7 +5,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from time import sleep
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import redis
 from ray.autoscaler._private.cli_logger import cli_logger
@@ -57,7 +57,7 @@ logger.addHandler(loghandler)
 
 
 class RayDogNodeProvider(NodeProvider):
-    def __init__(self, provider_config: Dict[str, Any], cluster_name: str) -> None:
+    def __init__(self, provider_config: dict[str, Any], cluster_name: str) -> None:
         logger.setLevel(logging.DEBUG)
         cli_logger.configure(verbosity=2)
 
@@ -127,7 +127,7 @@ class RayDogNodeProvider(NodeProvider):
                 return arg.split("=")[1]
         return None
 
-    def non_terminated_nodes(self, tag_filters: Dict[str, str]) -> List[str]:
+    def non_terminated_nodes(self, tag_filters: dict[str, str]) -> list[str]:
         """Return a list of node ids filtered by the specified tags dict.
 
         This list must not include terminated nodes. For performance reasons,
@@ -175,12 +175,12 @@ class RayDogNodeProvider(NodeProvider):
         status = self._tag_store.get_tag(node_id, "terminated")
         return (status == None) or (status != "")
 
-    def node_tags(self, node_id: str) -> Dict[str, str]:
+    def node_tags(self, node_id: str) -> dict[str, str]:
         """Returns the tags of the given node (string dict)."""
         logger.debug(f"node_tags {node_id}")
         return self._tag_store.get_all_tags(node_id)
 
-    def set_node_tags(self, node_id: str, tags: Dict) -> None:
+    def set_node_tags(self, node_id: str, tags: dict) -> None:
         """Sets the tag values (string dict) for the specified node."""
         logger.debug(f"set_node_tags {node_id} {tags}")
         self._tag_store.update_tags(node_id, tags)
@@ -204,8 +204,8 @@ class RayDogNodeProvider(NodeProvider):
         return privateip
 
     def create_node(
-        self, node_config: Dict[str, Any], tags: Dict[str, str], count: int
-    ) -> Optional[Dict[str, Any]]:
+        self, node_config: dict[str, Any], tags: dict[str, str], count: int
+    ) -> dict[str, Any] | None:
         """Creates a number of nodes within the namespace."""
         logger.debug(f"create_node {node_config} {tags} {count}")
         node_type = tags["ray-node-type"]
@@ -276,12 +276,12 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
     def create_node_with_resources_and_labels(
         self,
-        node_config: Dict[str, Any],
-        tags: Dict[str, str],
+        node_config: dict[str, Any],
+        tags: dict[str, str],
         count: int,
-        resources: Dict[str, float],
-        labels: Dict[str, str],
-    ) -> Optional[Dict[str, Any]]:
+        resources: dict[str, float],
+        labels: dict[str, str],
+    ) -> dict[str, Any] | None:
         """Create nodes with a given resource and label config.
         This is the method actually called by the autoscaler. Prefer to
         implement this when possible directly, otherwise it delegates to the
@@ -310,14 +310,14 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
         return (publicip, privateip)
 
-    def terminate_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+    def terminate_node(self, node_id: str) -> dict[str, Any] | None:
         """Terminates the specified node."""
         logger.debug(f"terminate_node {node_id}")
         self._raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
         self._tag_store.update_tags(node_id, {"terminated": "true"})
-        #TODO: can we delete the tags for terminated nodes, without creating sync issues?
+        # TODO: can we delete the tags for terminated nodes, without creating sync issues?
 
-    def terminate_nodes(self, node_ids: List[str]) -> Optional[Dict[str, Any]]:
+    def terminate_nodes(self, node_ids: list[str]) -> dict[str, Any] | None:
         """Terminates a set of nodes."""
         logger.debug(f"terminate_nodes {node_ids}")
         if self._raydog.head_node_id in node_ids:
@@ -330,13 +330,13 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 self.terminate_node(node_id)
         return None
 
-    def prepare_for_head_node(self, cluster_config: Dict[str, Any]) -> Dict[str, Any]:
+    def prepare_for_head_node(self, cluster_config: dict[str, Any]) -> dict[str, Any]:
         """Returns a new cluster config with custom configs for head node."""
         logger.debug(f"prepare_for_head_node {cluster_config}")
         return cluster_config
 
     @staticmethod
-    def bootstrap_config(cluster_config: Dict[str, Any]) -> Dict[str, Any]:
+    def bootstrap_config(cluster_config: dict[str, Any]) -> dict[str, Any]:
         """Bootstraps the cluster config by adding env defaults if needed."""
         logger.debug(f"bootstrap_config {cluster_config}")
 
@@ -381,7 +381,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 with open(os.path.join(self._basepath, filename)) as f:
                     script = f.read()
 
-            elif isinstance(script, List):
+            elif isinstance(script, list):
                 script = "\n".join(script)
 
             self._scripts[config_name] = script
@@ -401,7 +401,7 @@ class TagStore:
     def __init__(self, cluster_name: str):
         self._cluster_name = cluster_name
         self._redis: redis = None
-        self._tags: Dict[str, Dict] = {}
+        self._tags: dict[str, dict] = {}
 
     def find_matches(
         self, longlist: list[str], tag_name: str, tag_value: str
@@ -415,18 +415,18 @@ class TagStore:
         )
         return shortlist
 
-    def _update_tags(self, node_id: str, newtags: Dict[str, str]) -> None:
+    def _update_tags(self, node_id: str, newtags: dict[str, str]) -> None:
         assert node_id.startswith("ydid:task:")
         if node_id in self._tags:
             self._tags[node_id].update(newtags)
         else:
             self._tags[node_id] = newtags.copy()
 
-    def update_tags(self, node_id: str, newtags: Dict[str, str]) -> None:
+    def update_tags(self, node_id: str, newtags: dict[str, str]) -> None:
         self._update_tags(node_id, newtags)
         self._writeback(node_id, newtags)
 
-    def get_all_tags(self, node_id: str) -> Dict[str, str]:
+    def get_all_tags(self, node_id: str) -> dict[str, str]:
         return self._tags.get(node_id, {})
 
     def get_tag(self, node_id: str, tag_name: str) -> str:
@@ -436,7 +436,7 @@ class TagStore:
             return None
 
     def connect(
-        self, remote_server: str, port: int, auth_config: Dict[str, str] = None
+        self, remote_server: str, port: int, auth_config: dict[str, str] = None
     ) -> None:
         """Connect to the redis tag server on the head node"""
 
@@ -472,14 +472,14 @@ class TagStore:
                     node_id = key.removeprefix(prefix)
                     tags = self._redis.hgetall(key)
 
-                    #logger.debug(f"Tags for {node_id} {tags}")
+                    # logger.debug(f"Tags for {node_id} {tags}")
                     self._update_tags(node_id, tags)
 
                 if not cur:
                     break
                 cur, redis_keys = self._redis.scan(cursor=cur, match=prefix + "*")
 
-    def _writeback(self, node_id: str, tags: Dict[str, str]) -> None:
+    def _writeback(self, node_id: str, tags: dict[str, str]) -> None:
         """Upload tag data for one node to the tag server"""
         if self._redis:
             self._redis.hset(f"{self._cluster_name}:{node_id}", mapping=tags)
@@ -494,9 +494,10 @@ class TagStore:
 # ----------------------------------------------------------------------------------------
 # Connect to YellowDog and use it to setup clusters
 
+
 class AutoRayDog:
     def __init__(
-        self, provider_config: Dict[str, Any], cluster_name: str, tag_store: TagStore
+        self, provider_config: dict[str, Any], cluster_name: str, tag_store: TagStore
     ):
         self._is_shut_down = False
 
@@ -528,7 +529,7 @@ class AutoRayDog:
     def create_worker_pool(
         self,
         flavour: str,
-        node_config: Dict[str, Any],
+        node_config: dict[str, Any],
         count: int,
         userdata: str,
         metrics_enabled: bool = True,
@@ -555,7 +556,8 @@ class AutoRayDog:
 
         node_auto_shut_down = AutoShutdown(
             # shut down quickly, because Ray will have waited before terminating nodes
-            enabled=True, timeout=timedelta(minutes=4)
+            enabled=True,
+            timeout=timedelta(minutes=4),
         )
 
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
@@ -643,7 +645,9 @@ class AutoRayDog:
         head_task_group: TaskGroup = work_requirement.taskGroups[0]
         self._cluster_lifetime = head_task_group.runSpecification.taskTimeout
 
-        head_task: Task = self._get_tasks_in_task_group(head_task_group.id).list_all()[0]
+        head_task: Task = self._get_tasks_in_task_group(head_task_group.id).list_all()[
+            0
+        ]
         self.head_node_id = head_task.id
 
         # Find which worker pools already exist
@@ -802,10 +806,8 @@ class AutoRayDog:
                 "YD_API_KEY_SECRET": self._api_key_secret,
                 "YD_API_URL": self._api_url,
             },
-            outputs=(
-                [ TaskOutput.from_task_process() ]
-            ),
-            name="head_node_task"
+            outputs=([TaskOutput.from_task_process()]),
+            name="head_node_task",
         )
 
         self.head_node_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
