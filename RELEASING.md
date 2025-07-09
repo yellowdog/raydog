@@ -14,9 +14,11 @@ When RayDog is ready for release:
 The repository can be tagged using:
 
 ```commandline
-PROVIDER_VERSION=$(grep "__version__ =" src/yellowdog_ray/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
-git tag -a v$PROVIDER_VERSION -m "Version $PROVIDER_VERSION"
+RAYDOG_VERSION=$(grep "__version__ =" src/yellowdog_ray/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
+git tag -a v$RAYDOG_VERSION -m "Version $RAYDOG_VERSION"
 ```
+
+Push the current state of the repository and its tags to GitHub.
 
 ## 2. Upload the updated package to PyPi
 
@@ -26,7 +28,7 @@ The [Makefile](Makefile) provides targets for uploading new package versions to 
 make pypi-prod-upload
 ```
 
-It's also possible first to check the build using `twine`:
+It's possible first to check the build using `twine`:
 
 ```commandline
 make pypi-check-build
