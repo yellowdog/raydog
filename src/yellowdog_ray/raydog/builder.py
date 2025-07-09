@@ -500,9 +500,11 @@ class RayDogCluster:
                         "Timeout waiting for observability node task to enter EXECUTING state"
                     )
 
-            self.observability_node_id = observability_task.workerId.replace(
-                "wrkr", "node"
-            )[:-2]
+            self.observability_node_id = (
+                self.yd_client.worker_pool_client.get_node_by_worker_id(
+                    observability_task.workerId
+                ).id
+            )
             observability_node: Node = self.yd_client.worker_pool_client.get_node_by_id(
                 self.observability_node_id
             )
@@ -536,7 +538,9 @@ class RayDogCluster:
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL.seconds)
 
         # Set the head node ID and get the node details
-        self.head_node_node_id = task.workerId.replace("wrkr", "node")[:-2]
+        self.head_node_node_id = (
+            self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
+        )
         node: Node = self.yd_client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
