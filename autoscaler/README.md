@@ -8,7 +8,7 @@ A couple of non-standard aspects to the config:
 
 2. The auth section from the top level has to be duplicated in the provider config. Unfortunately, the manual duplication is unavoidable - the YellowDog node provider needs to be able to connect to the head node (to access tags) at points that aren't expected in the normal autoscaler lifecycle.
 
-The Python code for the autoscaler is in [../raydog/autoscaler.py](../raydog/autoscaler.py).
+The Python code for the autoscaler is in [../raydog/autoscaler.py](../src/yellowdog_ray/raydog/autoscaler.py).
 
 ## Node Initialisation
 
