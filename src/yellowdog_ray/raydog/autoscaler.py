@@ -1,3 +1,7 @@
+"""
+RayDog Autoscaler: Ray cluster creation and autoscaling using YellowDog.
+"""
+
 import logging
 import os
 import random
@@ -11,6 +15,7 @@ import redis
 from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
+from requests import HTTPError
 from sshtunnel import SSHTunnelForwarder
 from yellowdog_client.common import SearchClient
 from yellowdog_client.model import (
@@ -57,6 +62,10 @@ logger.addHandler(loghandler)
 
 
 class RayDogNodeProvider(NodeProvider):
+    """
+    The RayDog implementation of a Ray autoscaler.
+    """
+
     def __init__(self, provider_config: dict[str, Any], cluster_name: str) -> None:
         logger.setLevel(logging.DEBUG)
         cli_logger.configure(verbosity=2)
@@ -64,21 +73,21 @@ class RayDogNodeProvider(NodeProvider):
         logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
         # Force the cluster name to be lower case, to match the naming requirements for YellowDog
+        # ToDo: Needs tighter enforcement
         cluster_name = cluster_name.lower()
 
-        # Initialise the standard base class, in case there's anything useful in there
         super().__init__(provider_config, cluster_name)
 
-        # If we're running client-side, our bootstrap function puts the auth info into the provider_config
+        # If running client-side the bootstrap function puts the auth info into provider_config
         self._auth_config = self.provider_config.get("auth")
 
-        # Initialise various instance variables
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
         self._files_to_upload = []
 
-        # Work out whether this is the head node (ie. autoscaling config provided & running as the YD agent)
+        # Work out whether this is the head node (i.e., autoscaling config
+        # provided & running as the YD agent)
         configfile = self._get_autoscaling_config_option()
         if configfile:
             self._basepath = os.path.dirname(configfile)
@@ -89,24 +98,21 @@ class RayDogNodeProvider(NodeProvider):
 
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
-            # Connect to the redis tag store
             self._tag_store.connect(None, TAG_SERVER_PORT, self._auth_config)
 
-            # Running on the head node
             self._raydog = AutoRayDog(provider_config, cluster_name, self._tag_store)
 
             # Make sure that YellowDog knows about this cluster
             if not self._raydog.find_raydog_cluster():
                 raise Exception(f"Failed to find info in YellowDog for {cluster_name}")
 
-        else:
-            # Running on a client node
+        else:  # Running on a client node
             self._raydog = AutoRayDog(provider_config, cluster_name, self._tag_store)
 
             # Try to find an existing cluster
             if self._raydog.find_raydog_cluster():
+                logger.debug(f"Found an existing head node")
                 # Get the tags from an existing head node
-                logger.debug(f"Found an existimg head node")
                 self._tag_store.connect(
                     self._raydog.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
                 )
@@ -114,27 +120,33 @@ class RayDogNodeProvider(NodeProvider):
                 # Ray will create a new head node ... later
                 pass
 
-    def _is_running_as_yd_agent(self) -> bool:
-        """Detect when autoscaler is running under the YellowDog agent"""
+    @staticmethod
+    def _is_running_as_yd_agent() -> bool:
+        """
+        Detect when autoscaler is running under the YellowDog agent.
+        """
         return (os.environ.get("USER") == "yd-agent") or (
             os.environ.get("LOGNAME") == "yd-agent"
         )
 
-    def _get_autoscaling_config_option(self) -> str:
-        """Get the path for the autoscaling config file, if set"""
+    @staticmethod
+    def _get_autoscaling_config_option() -> str | None:
+        """
+        Get the path for the autoscaling config file, if set.
+        """
         for arg in sys.argv:
             if arg.startswith("--autoscaling-config="):
                 return arg.split("=")[1]
         return None
 
     def non_terminated_nodes(self, tag_filters: dict[str, str]) -> list[str]:
-        """Return a list of node ids filtered by the specified tags dict.
+        """
+        Return a list of node IDs filtered by the specified tags dict.
 
         This list must not include terminated nodes. For performance reasons,
         providers are allowed to cache the result of a call to
-        non_terminated_nodes() to serve single-node queries
-        (e.g. is_running(node_id)). This means that non_terminate_nodes() must
-        be called again to refresh results.
+        non_terminated_nodes() to serve single-node queries (e.g. is_running(node_id)).
+        This means that non_terminated_nodes() must be called again to refresh results.
 
         Examples:
             >>> from ray.autoscaler.node_provider import NodeProvider
@@ -143,7 +155,6 @@ class RayDogNodeProvider(NodeProvider):
             >>> provider.non_terminated_nodes( # doctest: +SKIP
             ...     {TAG_RAY_NODE_KIND: "worker"})
             ["node-1", "node-2"]
-
         """
         logger.debug(f"non_terminated_nodes {tag_filters}")
 
@@ -160,7 +171,9 @@ class RayDogNodeProvider(NodeProvider):
         return result
 
     def is_running(self, node_id: str) -> bool:
-        """Return whether the specified node is running."""
+        """
+        Is the specified node is running?
+        """
         logger.debug(f"is_running {node_id}")
 
         # True if the node exists but terminated flag isn't set
@@ -168,52 +181,64 @@ class RayDogNodeProvider(NodeProvider):
         return status == ""
 
     def is_terminated(self, node_id: str) -> bool:
-        """Return whether the specified node is terminated."""
+        """
+        Is the specified node terminated?
+        """
         logger.debug(f"is_terminated {node_id}")
 
         # True if the node doesn't exist or the terminated flag is set
         status = self._tag_store.get_tag(node_id, "terminated")
-        return (status == None) or (status != "")
+        return (status is None) or (status != "")
 
     def node_tags(self, node_id: str) -> dict[str, str]:
-        """Returns the tags of the given node (string dict)."""
+        """
+        Returns the tags of the given node ID.
+        """
         logger.debug(f"node_tags {node_id}")
         return self._tag_store.get_all_tags(node_id)
 
     def set_node_tags(self, node_id: str, tags: dict) -> None:
-        """Sets the tag values (string dict) for the specified node."""
+        """
+        Sets the tag values (string dict) for the specified node.
+        """
         logger.debug(f"set_node_tags {node_id} {tags}")
         self._tag_store.update_tags(node_id, tags)
 
     def external_ip(self, node_id: str) -> str:
-        """Returns the external ip of the given node."""
+        """
+        Returns the external IP of the given node.
+        """
         logger.debug(f"external_ip {node_id}")
         ip = self._tag_store.get_tag(node_id, "publicip")
         if ip:
             return ip
-        publicip, _ = self._get_ip_addresses(node_id)
-        return publicip
+        public_ip, _ = self._get_ip_addresses(node_id)
+        return public_ip
 
     def internal_ip(self, node_id: str) -> str:
-        """Returns the internal ip (Ray ip) of the given node."""
+        """
+        Returns the internal IP (Ray IP) of the given node.
+        """
         logger.debug(f"internal_ip {node_id}")
         ip = self._tag_store.get_tag(node_id, "privateip")
         if ip:
             return ip
-        _, privateip = self._get_ip_addresses(node_id)
-        return privateip
+        _, private_ip = self._get_ip_addresses(node_id)
+        return private_ip
 
     def create_node(
         self, node_config: dict[str, Any], tags: dict[str, str], count: int
     ) -> dict[str, Any] | None:
-        """Creates a number of nodes within the namespace."""
+        """
+        Creates a number of nodes within the namespace.
+        """
         logger.debug(f"create_node {node_config} {tags} {count}")
         node_type = tags["ray-node-type"]
 
         flavour = tags["ray-user-node-type"].lower()
 
         # Check that YellowDog knows how to create instances of this type
-        # TODO: handle the on-prem case
+        # ToDo: handle the on-prem case
         if not self._raydog.has_worker_pool(flavour):
             node_init_script = self._get_script("initialization_script")
 
@@ -282,7 +307,8 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         resources: dict[str, float],
         labels: dict[str, str],
     ) -> dict[str, Any] | None:
-        """Create nodes with a given resource and label config.
+        """
+        Create nodes with a given resource and label config.
         This is the method actually called by the autoscaler. Prefer to
         implement this when possible directly, otherwise it delegates to the
         create_node() implementation.
@@ -296,29 +322,35 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         return self.create_node(node_config, tags, count)
 
     def _get_ip_addresses(self, node_id: str) -> tuple[str, str]:
-        # Get the public & private IP addresses from YellowDog
-        publicip, privateip = self._raydog.get_ip_addresses(node_id)
+        """
+        Get the public & private IP addresses from YellowDog.
+        """
+        public_ip, private_ip = self._raydog.get_ip_addresses(node_id)
 
         # Add to the tag store
         self._tag_store.update_tags(
-            node_id, {"privateip": privateip, "publicip": publicip}
+            node_id, {"privateip": private_ip, "publicip": public_ip}
         )
 
         # Add to the data used for reverse lookups
-        self._internal_ip_cache[privateip] = node_id
-        self._external_ip_cache[publicip] = node_id
+        self._internal_ip_cache[private_ip] = node_id
+        self._external_ip_cache[public_ip] = node_id
 
-        return (publicip, privateip)
+        return (public_ip, private_ip)
 
-    def terminate_node(self, node_id: str) -> dict[str, Any] | None:
-        """Terminates the specified node."""
+    def terminate_node(self, node_id: str) -> None:
+        """
+        Terminates the specified node.
+        """
         logger.debug(f"terminate_node {node_id}")
         self._raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
         self._tag_store.update_tags(node_id, {"terminated": "true"})
-        # TODO: can we delete the tags for terminated nodes, without creating sync issues?
+        # ToDo: can we delete the tags for terminated nodes, without creating sync issues?
 
-    def terminate_nodes(self, node_ids: list[str]) -> dict[str, Any] | None:
-        """Terminates a set of nodes."""
+    def terminate_nodes(self, node_ids: list[str]) -> None:
+        """
+        Terminates a set of nodes.
+        """
         logger.debug(f"terminate_nodes {node_ids}")
         if self._raydog.head_node_id in node_ids:
             # if the head node is being terminated, just shut down the cluster
@@ -331,13 +363,17 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         return None
 
     def prepare_for_head_node(self, cluster_config: dict[str, Any]) -> dict[str, Any]:
-        """Returns a new cluster config with custom configs for head node."""
+        """
+        Returns a new cluster config with custom configs for head node.
+        """
         logger.debug(f"prepare_for_head_node {cluster_config}")
         return cluster_config
 
     @staticmethod
     def bootstrap_config(cluster_config: dict[str, Any]) -> dict[str, Any]:
-        """Bootstraps the cluster config by adding env defaults if needed."""
+        """
+        Bootstraps the cluster config by adding env defaults if needed.
+        """
         logger.debug(f"bootstrap_config {cluster_config}")
 
         # copy the global auth info to the provider, so the constructor sees it
@@ -345,7 +381,9 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         return cluster_config
 
     def _get_head_node_command_runner(self) -> CommandRunnerInterface:
-        """Create a CommandRunner object for the head node"""
+        """
+        Create a CommandRunner object for the head node.
+        """
         assert self._auth_config
 
         if not self._cmd_runner:
@@ -361,17 +399,21 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
     @staticmethod
     def _read_file(filename: str) -> str:
-        """Read the contents of a file"""
+        """
+        Read the contents of a file.
+        """
         with open(filename) as f:
             return f.read()
 
     def _get_script(self, config_name: str) -> str:
-        """Either read a script from a file or create it from a list of lines"""
+        """
+        Either read a script from a file or create it from a list of lines.
+        """
 
         script = self._scripts.get(config_name)
-        if not script:
+        if script is None:
             script = self.provider_config.get(config_name)
-            if not script:
+            if script is None:
                 return ""
 
             if isinstance(script, str) and script.startswith("file:"):
@@ -389,13 +431,10 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         return script
 
 
-# ----------------------------------------------------------------------------------------
-# Manage the tags used to control everything
-
-
 class TagStore:
-    """Manage the tags used to control everything. The tag store is a dedicated
-    Redis/Valkey server running on the head node
+    """
+    Manage the tags used to control everything. The tag store is a dedicated
+    Redis/Valkey server running on the head node.
     """
 
     def __init__(self, cluster_name: str):
@@ -404,9 +443,9 @@ class TagStore:
         self._tags: dict[str, dict] = {}
 
     def find_matches(
-        self, longlist: list[str], tag_name: str, tag_value: str
+        self, longlist: list[str] | None, tag_name: str, tag_value: str
     ) -> list[str]:
-        if longlist == None:
+        if longlist is None:
             longlist = self._tags.keys()
         shortlist = list(
             filter(
@@ -415,33 +454,35 @@ class TagStore:
         )
         return shortlist
 
-    def _update_tags(self, node_id: str, newtags: dict[str, str]) -> None:
+    def _update_tags(self, node_id: str, new_tags: dict[str, str]) -> None:
         assert node_id.startswith("ydid:task:")
         if node_id in self._tags:
-            self._tags[node_id].update(newtags)
+            self._tags[node_id].update(new_tags)
         else:
-            self._tags[node_id] = newtags.copy()
+            self._tags[node_id] = new_tags.copy()
 
-    def update_tags(self, node_id: str, newtags: dict[str, str]) -> None:
-        self._update_tags(node_id, newtags)
-        self._writeback(node_id, newtags)
+    def update_tags(self, node_id: str, new_tags: dict[str, str]) -> None:
+        self._update_tags(node_id, new_tags)
+        self._writeback(node_id, new_tags)
 
     def get_all_tags(self, node_id: str) -> dict[str, str]:
         return self._tags.get(node_id, {})
 
-    def get_tag(self, node_id: str, tag_name: str) -> str:
+    def get_tag(self, node_id: str, tag_name: str) -> str | None:
         if node_id in self._tags:
             return self._tags[node_id].get(tag_name, "")
         else:
             return None
 
     def connect(
-        self, remote_server: str, port: int, auth_config: dict[str, str] = None
+        self, remote_server: str | None, port: int, auth_config: dict[str, str] = None
     ) -> None:
-        """Connect to the redis tag server on the head node"""
+        """
+        Connect to the Redis tag server on the head node.
+        """
 
         # setup an SSH tunnel, if required
-        if remote_server:
+        if remote_server is not None:
             logger.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
             tunnel = SSHTunnelForwarder(
                 remote_server,
@@ -462,7 +503,9 @@ class TagStore:
         self.refresh()
 
     def refresh(self) -> None:
-        """Read all tags from the head node"""
+        """
+        Read all tags from the head node.
+        """
         if self._redis:
             prefix = f"{self._cluster_name}:"
 
@@ -480,22 +523,26 @@ class TagStore:
                 cur, redis_keys = self._redis.scan(cursor=cur, match=prefix + "*")
 
     def _writeback(self, node_id: str, tags: dict[str, str]) -> None:
-        """Upload tag data for one node to the tag server"""
+        """
+        Upload tag data for one node to the tag server.
+        """
         if self._redis:
             self._redis.hset(f"{self._cluster_name}:{node_id}", mapping=tags)
 
     def _writeback_all(self) -> None:
-        """Upload a set of tag data to the head node"""
+        """
+        Upload a set of tag data to the head node.
+        """
         if self._redis:
             for node_id, node_tags in self._tags.items():
                 self._writeback(node_id, node_tags)
 
 
-# ----------------------------------------------------------------------------------------
-# Connect to YellowDog and use it to setup clusters
-
-
 class AutoRayDog:
+    """
+    Connect to YellowDog and use it to set up Ray clusters.
+    """
+
     def __init__(
         self, provider_config: dict[str, Any], cluster_name: str, tag_store: TagStore
     ):
@@ -519,11 +566,15 @@ class AutoRayDog:
         self._cluster_lifetime = self._parse_timespan(provider_config.get("lifetime"))
         self._build_timeout = self._parse_timespan(provider_config.get("build_timeout"))
 
-        # Connect to YellowDog
-        self._connect_to_yellowdog_api()
+        # Get the PlatformClient object
+        self.yd_client: PlatformClient = self._get_yd_client()
+
+        self.head_node_id: str | None = None
 
     def has_worker_pool(self, flavour: str) -> bool:
-        """Is there a worker pool for this type of node?"""
+        """
+        Is there an existing worker pool for this type of node?
+        """
         return flavour in self._worker_pools
 
     def create_worker_pool(
@@ -534,7 +585,9 @@ class AutoRayDog:
         userdata: str,
         metrics_enabled: bool = True,
     ) -> None:
-        """Create a new worker pool for the given type of node"""
+        """
+        Create a new worker pool for the given type of node.
+        """
 
         logger.debug(f"create_worker_pool {flavour}")
 
@@ -555,7 +608,7 @@ class AutoRayDog:
         )
 
         node_auto_shut_down = AutoShutdown(
-            # shut down quickly, because Ray will have waited before terminating nodes
+            # Shut down quickly, because Ray will have waited before terminating nodes
             enabled=True,
             timeout=timedelta(minutes=4),
         )
@@ -578,10 +631,13 @@ class AutoRayDog:
 
         self._worker_pools[flavour] = worker_pool.id
 
-    def _connect_to_yellowdog_api(self) -> None:
-        """Connect to the YellowDog API, using creds from environment variables and/or a .env file"""
+    def _get_yd_client(self) -> PlatformClient:
+        """
+        Create the PlatformClient object using creds from environment variables
+        and/or a .env file.
+        """
 
-        # Read extra environment vars from a file ... a minimalist dotenv
+        # Read extra environment vars from a file ... a minimal dotenv
         env_file = ".env"
         if os.path.exists(env_file):
             with open(env_file) as f:
@@ -599,8 +655,7 @@ class AutoRayDog:
         self._api_key_id = os.getenv("YD_API_KEY_ID")
         self._api_key_secret = os.getenv("YD_API_KEY_SECRET")
 
-        # Make the connection
-        self.yd_client = PlatformClient.create(
+        return PlatformClient.create(
             ServicesSchema(defaultUrl=self._api_url),
             ApiKey(
                 self._api_key_id,
@@ -609,7 +664,9 @@ class AutoRayDog:
         )
 
     def find_raydog_cluster(self) -> bool:
-        """Try to find an existing RayDog cluster in YellowDog"""
+        """
+        Try to find an existing RayDog cluster in YellowDog.
+        """
 
         # Is there a live work requirement with the right name?
         candidates = self.yd_client.work_client.get_work_requirements(
@@ -618,7 +675,7 @@ class AutoRayDog:
             )
         )
 
-        work_req_id: str = None
+        work_req_id: str | None = None
         work_req: WorkRequirement
         for work_req in candidates.iterate():
             if work_req.name.startswith(self._cluster_name):
@@ -680,13 +737,17 @@ class AutoRayDog:
         return True
 
     def _get_work_requirement(self) -> WorkRequirement:
-        """Get the latest state of the YellowDog work requirement for this cluster"""
+        """
+        Get the latest state of the YellowDog work requirement for this cluster.
+        """
         return self.yd_client.work_client.get_work_requirement_by_id(
             self._work_requirement_id
         )
 
     def _get_tasks_in_task_group(self, task_group_id: str) -> SearchClient[Task]:
-        """Helper method to do a search to find all the Tasks in a TaskGroup"""
+        """
+        Helper method to do a search to find all the Tasks in a TaskGroup.
+        """
         return self.yd_client.work_client.get_tasks(
             TaskSearch(
                 workRequirementId=self._work_requirement_id,
@@ -696,10 +757,11 @@ class AutoRayDog:
         )
 
     def get_ip_addresses(self, node_id: str) -> tuple[str, str]:
-        """Extract the public and private IP addresses for the node"""
-        task: Task
+        """
+        Extract the public and private IP addresses for the node.
+        """
         while True:
-            task = self.yd_client.work_client.get_task_by_id(node_id)
+            task: Task = self.yd_client.work_client.get_task_by_id(node_id)
             if task.status in [TaskStatus.PENDING, TaskStatus.READY]:
                 logger.debug(f"Waiting for {node_id} to start running")
                 sleep(5)
@@ -712,7 +774,9 @@ class AutoRayDog:
         return (ydnode.details.publicIpAddress, ydnode.details.privateIpAddress)
 
     def shut_down(self) -> None:
-        """Shut down the Ray cluster"""
+        """
+        Shut down the Ray cluster.
+        """
         if not self._is_shut_down:
             self._is_shut_down = True
 
@@ -734,36 +798,39 @@ class AutoRayDog:
                 )
             self._worker_pools = {}
 
-    @staticmethod
-    def _get_node_id_for_task(task: Task) -> str:
-        """Get the YellowDog id for the node running a particular task.
-        Because of the way YD IDs are constructed, this is just string manipulation
+    def _get_node_id_for_task(self, task: Task) -> str:
         """
-        return task.workerId.replace("wrkr", "node")[:-2]
+        Get the YellowDog ID for the node running a particular task.
+        """
+        return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
 
     @staticmethod
-    def _parse_timespan(timespan: str) -> timedelta:
-        """Parse a string representing a time span. If it ends with 'd' its in days,
-        'h' is hours, 'm' is minutes, 's' (or nothing) is seconds
+    def _parse_timespan(timespan: str | None) -> timedelta | None:
         """
-        if not timespan:
+        Parse a string representing a time span. If it ends with 'd' its in days,
+        'h' is hours, 'm' is minutes, 's' (or nothing) is seconds.
+        """
+        if timespan is None:
             return None
 
-        lastchar = timespan[-1].lower()
-        if lastchar in "dhms":
+        last_char = timespan[-1].lower()
+        if last_char in "dhms":
             duration = float(timespan[0:-1])
-            if lastchar == "d":
+            if last_char == "d":
                 return timedelta(days=duration)
-            elif lastchar == "h":
+            elif last_char == "h":
                 return timedelta(hours=duration)
-            elif lastchar == "m":
+            elif last_char == "m":
                 return timedelta(minutes=duration)
-            elif lastchar == "s":
+            elif last_char == "s":
                 return timedelta(seconds=duration)
         else:
             return timedelta(seconds=float(timespan))
 
     def create_head_node(self, flavour: str, ray_start_script: str) -> str:
+        """
+        Create the head node for the cluster.
+        """
 
         start_time = datetime.now()
 
@@ -839,6 +906,9 @@ class AutoRayDog:
     def create_worker_nodes(
         self, flavour: str, ray_start_script: str, count: int
     ) -> list[str]:
+        """
+        Create the worker nodes for the cluster.
+        """
 
         logger.debug(f"create_worker_nodes {flavour} {count}")
 
@@ -850,7 +920,7 @@ class AutoRayDog:
         )
 
         # Look for a task group for this node flavour
-        task_group: TaskGroup = None
+        task_group: TaskGroup | None = None
         for tg in work_requirement.taskGroups:
             if tg.tag == flavour:
                 task_group = tg
@@ -888,10 +958,10 @@ class AutoRayDog:
             environment={"RAY_HEAD_IP": self.head_node_private_ip},
         )
 
-        newtasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
+        new_tasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group.id,
             [worker_node_task for _ in range(count)],
         )
 
         # Return a list of node ids
-        return [task.id for task in newtasks]
+        return [task.id for task in new_tasks]
