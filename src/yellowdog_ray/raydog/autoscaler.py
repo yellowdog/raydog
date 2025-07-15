@@ -43,10 +43,13 @@ from yellowdog_client.model import (
 from yellowdog_client.platform_client import PlatformClient
 
 TASK_TYPE = "bash"
-
 HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
-
 TAG_SERVER_PORT = 16667
+# Shut down nodes quickly, because the Ray autoscaler will
+# already have waited before terminating
+IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
+IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=120.0)
+DEFAULT_MAX_NODES = 1000
 
 logger = logging.getLogger(__name__)
 # logger = logging.getLogger("RayDog")
@@ -67,13 +70,16 @@ class RayDogNodeProvider(NodeProvider):
     """
 
     def __init__(self, provider_config: dict[str, Any], cluster_name: str) -> None:
+        """
+        Called by Ray to provide nodes for the cluster.
+        """
         logger.setLevel(logging.DEBUG)
         cli_logger.configure(verbosity=2)
 
         logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
         # Force the cluster name to be lower case, to match the naming requirements for YellowDog
-        # ToDo: Needs tighter enforcement
+        # ToDo: Needs tighter name enforcement
         cluster_name = cluster_name.lower()
 
         super().__init__(provider_config, cluster_name)
@@ -607,20 +613,20 @@ class AutoRayDog:
             instanceTags=None,
         )
 
-        node_auto_shut_down = AutoShutdown(
-            # Shut down quickly, because Ray will have waited before terminating nodes
-            enabled=True,
-            timeout=timedelta(minutes=4),
-        )
-
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
             createNodeWorkers=NodeWorkerTarget.per_node(1),
-            minNodes=1,
-            maxNodes=node_config.get("max_nodes", 1000),
+            minNodes=0,
+            maxNodes=node_config.get("max_nodes", DEFAULT_MAX_NODES),
             workerTag=flavour,
             metricsEnabled=metrics_enabled,
-            idleNodeShutdown=node_auto_shut_down,
-            idlePoolShutdown=None,
+            idleNodeShutdown=AutoShutdown(
+                enabled=True,
+                timeout=IDLE_NODE_YD_SHUTDOWN,
+            ),
+            idlePoolShutdown=AutoShutdown(
+                enabled=True,
+                timeout=IDLE_POOL_YD_SHUTDOWN,
+            ),
         )
 
         worker_pool: WorkerPool = (
