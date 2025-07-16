@@ -12,7 +12,8 @@ from time import sleep
 from typing import Any
 
 import redis
-from ray.autoscaler._private.cli_logger import cli_logger
+
+# from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
 from requests import HTTPError
@@ -48,33 +49,24 @@ TAG_SERVER_PORT = 16667
 # Shut down nodes quickly, because the Ray autoscaler will
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
-IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=120.0)
-DEFAULT_MAX_NODES = 1000
+IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
+DEFAULT_MAX_NODES_IN_WORKER_POOL = 10000
 
 logger = logging.getLogger(__name__)
-# logger = logging.getLogger("RayDog")
-logger.setLevel(logging.DEBUG)
-
-loghandler = logging.FileHandler("/tmp/raydog.log")
-loghandler.setFormatter(
-    logging.Formatter(
-        fmt="%(asctime)s\t%(levelname)s %(filename)s:%(lineno)s -- %(message)s"
-    )
-)
-logger.addHandler(loghandler)
 
 
 class RayDogNodeProvider(NodeProvider):
     """
-    The RayDog implementation of a Ray autoscaler.
+    The RayDog implementation of a Ray autoscaling provider.
     """
 
     def __init__(self, provider_config: dict[str, Any], cluster_name: str) -> None:
         """
         Called by Ray to provide nodes for the cluster.
         """
-        logger.setLevel(logging.DEBUG)
-        cli_logger.configure(verbosity=2)
+
+        # logger.setLevel(logging.DEBUG)
+        # cli_logger.configure(verbosity=2)
 
         logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
@@ -616,7 +608,7 @@ class AutoRayDog:
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
             createNodeWorkers=NodeWorkerTarget.per_node(1),
             minNodes=0,
-            maxNodes=node_config.get("max_nodes", DEFAULT_MAX_NODES),
+            maxNodes=node_config.get("max_nodes", DEFAULT_MAX_NODES_IN_WORKER_POOL),
             workerTag=flavour,
             metricsEnabled=metrics_enabled,
             idleNodeShutdown=AutoShutdown(
@@ -879,7 +871,6 @@ class AutoRayDog:
                 "YD_API_KEY_SECRET": self._api_key_secret,
                 "YD_API_URL": self._api_url,
             },
-            outputs=([TaskOutput.from_task_process()]),
             name="head_node_task",
         )
 
@@ -941,6 +932,7 @@ class AutoRayDog:
                     name=f"worker-nodes-{flavour}",
                     tag=flavour,
                     finishIfAnyTaskFailed=False,
+                    finishIfAllTasksFinished=False,
                     runSpecification=RunSpecification(
                         taskTypes=[TASK_TYPE],
                         workerTags=[flavour],
