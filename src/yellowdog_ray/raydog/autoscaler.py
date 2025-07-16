@@ -52,7 +52,7 @@ IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
 IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
 DEFAULT_MAX_NODES_IN_WORKER_POOL = 10000
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 class RayDogNodeProvider(NodeProvider):
@@ -68,7 +68,7 @@ class RayDogNodeProvider(NodeProvider):
         # logger.setLevel(logging.DEBUG)
         # cli_logger.configure(verbosity=2)
 
-        logger.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
+        LOG.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
         # Force the cluster name to be lower case, to match the naming requirements for YellowDog
         # ToDo: Needs tighter name enforcement
@@ -109,7 +109,7 @@ class RayDogNodeProvider(NodeProvider):
 
             # Try to find an existing cluster
             if self._raydog.find_raydog_cluster():
-                logger.debug(f"Found an existing head node")
+                LOG.debug(f"Found an existing head node")
                 # Get the tags from an existing head node
                 self._tag_store.connect(
                     self._raydog.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
@@ -154,7 +154,7 @@ class RayDogNodeProvider(NodeProvider):
             ...     {TAG_RAY_NODE_KIND: "worker"})
             ["node-1", "node-2"]
         """
-        logger.debug(f"non_terminated_nodes {tag_filters}")
+        LOG.debug(f"non_terminated_nodes {tag_filters}")
 
         # Make sure the tags are up to date
         self._tag_store.refresh()
@@ -165,14 +165,14 @@ class RayDogNodeProvider(NodeProvider):
             shortlist = self._tag_store.find_matches(shortlist, k, v)
 
         result = shortlist
-        logger.debug(f"matching nodes: {result}")
+        LOG.debug(f"matching nodes: {result}")
         return result
 
     def is_running(self, node_id: str) -> bool:
         """
         Is the specified node is running?
         """
-        logger.debug(f"is_running {node_id}")
+        LOG.debug(f"is_running {node_id}")
 
         # True if the node exists but terminated flag isn't set
         status = self._tag_store.get_tag(node_id, "terminated")
@@ -182,7 +182,7 @@ class RayDogNodeProvider(NodeProvider):
         """
         Is the specified node terminated?
         """
-        logger.debug(f"is_terminated {node_id}")
+        LOG.debug(f"is_terminated {node_id}")
 
         # True if the node doesn't exist or the terminated flag is set
         status = self._tag_store.get_tag(node_id, "terminated")
@@ -192,21 +192,21 @@ class RayDogNodeProvider(NodeProvider):
         """
         Returns the tags of the given node ID.
         """
-        logger.debug(f"node_tags {node_id}")
+        LOG.debug(f"node_tags {node_id}")
         return self._tag_store.get_all_tags(node_id)
 
     def set_node_tags(self, node_id: str, tags: dict) -> None:
         """
         Sets the tag values (string dict) for the specified node.
         """
-        logger.debug(f"set_node_tags {node_id} {tags}")
+        LOG.debug(f"set_node_tags {node_id} {tags}")
         self._tag_store.update_tags(node_id, tags)
 
     def external_ip(self, node_id: str) -> str:
         """
         Returns the external IP of the given node.
         """
-        logger.debug(f"external_ip {node_id}")
+        LOG.debug(f"external_ip {node_id}")
         ip = self._tag_store.get_tag(node_id, "publicip")
         if ip:
             return ip
@@ -217,7 +217,7 @@ class RayDogNodeProvider(NodeProvider):
         """
         Returns the internal IP (Ray IP) of the given node.
         """
-        logger.debug(f"internal_ip {node_id}")
+        LOG.debug(f"internal_ip {node_id}")
         ip = self._tag_store.get_tag(node_id, "privateip")
         if ip:
             return ip
@@ -230,7 +230,7 @@ class RayDogNodeProvider(NodeProvider):
         """
         Creates a number of nodes within the namespace.
         """
-        logger.debug(f"create_node {node_config} {tags} {count}")
+        LOG.debug(f"create_node {node_config} {tags} {count}")
         node_type = tags["ray-node-type"]
 
         flavour = tags["ray-user-node-type"].lower()
@@ -283,7 +283,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                     self._get_head_node_command_runner()
                 )
                 for filename in self._files_to_upload:
-                    logger.debug(f"Uploading {filename}")
+                    LOG.debug(f"Uploading {filename}")
                     cmd_runner.run_rsync_up(filename, f"~/{filename}")
         else:
             # Create worker nodes
@@ -313,9 +313,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
         Optionally may throw a ray.autoscaler.node_launch_exception.NodeLaunchException.
         """
-        logger.info(
-            f"create_node_with_resources_and_labels {node_config} {tags} {count}"
-        )
+        LOG.info(f"create_node_with_resources_and_labels {node_config} {tags} {count}")
 
         return self.create_node(node_config, tags, count)
 
@@ -340,7 +338,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         Terminates the specified node.
         """
-        logger.debug(f"terminate_node {node_id}")
+        LOG.debug(f"terminate_node {node_id}")
         self._raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
         self._tag_store.update_tags(node_id, {"terminated": "true"})
         # ToDo: can we delete the tags for terminated nodes, without creating sync issues?
@@ -349,7 +347,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         Terminates a set of nodes.
         """
-        logger.debug(f"terminate_nodes {node_ids}")
+        LOG.debug(f"terminate_nodes {node_ids}")
         if self._raydog.head_node_id in node_ids:
             # if the head node is being terminated, just shut down the cluster
             self._raydog.shut_down()
@@ -364,7 +362,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         Returns a new cluster config with custom configs for head node.
         """
-        logger.debug(f"prepare_for_head_node {cluster_config}")
+        LOG.debug(f"prepare_for_head_node {cluster_config}")
         return cluster_config
 
     @staticmethod
@@ -372,7 +370,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         Bootstraps the cluster config by adding env defaults if needed.
         """
-        logger.debug(f"bootstrap_config {cluster_config}")
+        LOG.debug(f"bootstrap_config {cluster_config}")
 
         # copy the global auth info to the provider, so the constructor sees it
         cluster_config["provider"]["auth"] = cluster_config["auth"].copy()
@@ -481,7 +479,7 @@ class TagStore:
 
         # setup an SSH tunnel, if required
         if remote_server is not None:
-            logger.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
+            LOG.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
             tunnel = SSHTunnelForwarder(
                 remote_server,
                 ssh_username=auth_config["ssh_user"],
@@ -489,7 +487,7 @@ class TagStore:
                 remote_bind_address=("127.0.0.1", port),
             )
             tunnel.start()
-            logger.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
+            LOG.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
             port = tunnel.local_bind_port
 
         # Connect to Redis
@@ -587,7 +585,7 @@ class AutoRayDog:
         Create a new worker pool for the given type of node.
         """
 
-        logger.debug(f"create_worker_pool {flavour}")
+        LOG.debug(f"create_worker_pool {flavour}")
 
         compute_requirement_template_id = node_config["compute_requirement_template"]
         images_id = node_config.get("images_id", None)
@@ -761,7 +759,7 @@ class AutoRayDog:
         while True:
             task: Task = self.yd_client.work_client.get_task_by_id(node_id)
             if task.status in [TaskStatus.PENDING, TaskStatus.READY]:
-                logger.debug(f"Waiting for {node_id} to start running")
+                LOG.debug(f"Waiting for {node_id} to start running")
                 sleep(5)
             else:
                 break
@@ -907,7 +905,7 @@ class AutoRayDog:
         Create the worker nodes for the cluster.
         """
 
-        logger.debug(f"create_worker_nodes {flavour} {count}")
+        LOG.debug(f"create_worker_nodes {flavour} {count}")
 
         # Get the latest state of the work requirement from YellowDog
         work_requirement: WorkRequirement = (
