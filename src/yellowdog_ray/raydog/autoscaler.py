@@ -5,6 +5,7 @@ RayDog Autoscaler: Ray cluster creation and autoscaling using YellowDog.
 import logging
 import os
 import random
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -572,8 +573,8 @@ class AutoRayDog:
         )
 
         # Determine how long to wait for things
-        self._cluster_lifetime = self._parse_timespan(provider_config.get("lifetime"))
-        self._build_timeout = self._parse_timespan(provider_config.get("build_timeout"))
+        self._cluster_lifetime = self._parse_duration(provider_config.get("lifetime"))
+        self._build_timeout = self._parse_duration(provider_config.get("build_timeout"))
 
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
@@ -646,7 +647,7 @@ class AutoRayDog:
         and/or a .env file.
         """
 
-        # Load extra environment variables from a .env file;
+        # Load extra environment variables from a .env file if it exists;
         # do not override existing variables
         load_dotenv(verbose=False, override=False)
 
@@ -812,33 +813,35 @@ class AutoRayDog:
         return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
 
     @staticmethod
-    def _parse_timespan(timespan: str | None) -> timedelta | None:
+    def _parse_duration(duration_str: str | None) -> timedelta | None:
         """
-        Parse a string representing a timespan. If it ends with 'd', it's in days,
-        'h' is hours, 'm' is minutes, 's' (or nothing) is seconds.
+        Regular expression parser to match days, hours, minutes, and seconds
+        (e.g., "1d 2h 30m 15s")'; standalone numbers are treated as seconds.
         """
-        if timespan is None:
+        if duration_str is None:
             return None
 
-        try:
-            last_char = timespan[-1].lower()
-            if last_char in "dhms":
-                duration = float(timespan[0:-1])
-                if last_char == "d":
-                    return timedelta(days=duration)
-                elif last_char == "h":
-                    return timedelta(hours=duration)
-                elif last_char == "m":
-                    return timedelta(minutes=duration)
-                elif last_char == "s":
-                    return timedelta(seconds=duration)
-            else:
-                return timedelta(seconds=float(timespan))
-        except Exception as e:
+        # Check if the string is a standalone number; treat as seconds
+        if re.match(r"^\d+$", duration_str.strip()):
+            return timedelta(seconds=int(duration_str))
+
+        # Regular expression to match days, hours, minutes, and seconds (e.g., "1d 2h 30m 15s")
+        pattern = r"(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s\s*)?"
+        match = re.match(pattern, duration_str.strip().lower())
+
+        if not match or not re.search(r"[dhms]", duration_str, re.IGNORECASE):
             raise Exception(
-                f"Invalid duration '{timespan}': {e}; "
-                f"durations should be  of form '<float>{{dhms}}'"
+                f"Invalid duration '{duration_str}' "
+                f"durations should be of form (e.g.) '1d 2h 30m 15s'"
             )
+
+        # Extract days, hours, minutes, seconds (convert to int, default to 0 if not present)
+        days = int(match.group(1) or 0)
+        hours = int(match.group(2) or 0)
+        minutes = int(match.group(3) or 0)
+        seconds = int(match.group(4) or 0)
+
+        return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
 
     def create_head_node(self, flavour: str, ray_start_script: str) -> str:
         """
