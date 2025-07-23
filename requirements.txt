@@ -1,3 +1,4 @@
+dotenv
 ray[client]
 sshtunnel
 yellowdog-sdk >= 9.3.2

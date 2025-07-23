@@ -12,6 +12,7 @@ from time import sleep
 from typing import Any
 
 import redis
+from dotenv import load_dotenv
 from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
@@ -56,6 +57,13 @@ IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
 # the actual maximum size of the worker pool; this prevents YellowDog
 # imposing a separate limit
 MAX_NODES_IN_WORKER_POOL = 10000
+
+# API URL and Application credential vars.
+YD_API_URL_VAR = "YD_API_URL"
+YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
+YD_API_KEY_ID_VAR = "YD_API_KEY_ID"
+YD_API_KEY_SECRET_VAR = "YD_API_KEY_SECRET"
+
 
 LOG = logging.getLogger(__name__)
 
@@ -638,23 +646,20 @@ class AutoRayDog:
         and/or a .env file.
         """
 
-        # Read extra environment vars from a file ... a minimal dotenv
-        env_file = ".env"
-        if os.path.exists(env_file):
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if (not line) or line.startswith("#"):
-                        continue
-                    name, equals, value = line.partition("=")
-                    if equals == "=":
-                        value = value.removeprefix('"').removesuffix('"')
-                        os.environ[name] = value
+        # Load extra environment variables from a .env file;
+        # do not override existing variables
+        load_dotenv(verbose=False, override=False)
 
-        # Get API login info from environment variables
-        self._api_url = os.getenv("YD_API_URL", "https://api.yellowdog.ai")
-        self._api_key_id = os.getenv("YD_API_KEY_ID")
-        self._api_key_secret = os.getenv("YD_API_KEY_SECRET")
+        # YellowDog API URL and Application credentials
+        self._api_url = os.getenv("YD_API_URL", YD_DEFAULT_API_URL)
+        self._api_key_id = os.getenv(YD_API_KEY_ID_VAR)
+        self._api_key_secret = os.getenv(YD_API_KEY_SECRET_VAR)
+
+        if not all([self._api_key_id, self._api_key_secret]):
+            raise Exception(
+                f"YellowDog application key ID '{YD_API_KEY_ID_VAR}' and "
+                f"secret '{YD_API_KEY_SECRET_VAR}' env. variables must be set"
+            )
 
         return PlatformClient.create(
             ServicesSchema(defaultUrl=self._api_url),
