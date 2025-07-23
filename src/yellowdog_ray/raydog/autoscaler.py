@@ -12,8 +12,7 @@ from time import sleep
 from typing import Any
 
 import redis
-
-# from ray.autoscaler._private.cli_logger import cli_logger
+from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
 from requests import HTTPError
@@ -30,7 +29,6 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
-    TaskOutput,
     TaskSearch,
     TaskStatus,
     WorkerPool,
@@ -44,13 +42,20 @@ from yellowdog_client.model import (
 from yellowdog_client.platform_client import PlatformClient
 
 TASK_TYPE = "bash"
+
 HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
+
 TAG_SERVER_PORT = 16667
+
 # Shut down nodes quickly, because the Ray autoscaler will
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
 IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
-DEFAULT_MAX_NODES_IN_WORKER_POOL = 10000
+
+# The 'max_workers' property in the autoscaler YAML will determine
+# the actual maximum size of the worker pool; this prevents YellowDog
+# imposing a separate limit
+MAX_NODES_IN_WORKER_POOL = 10000
 
 LOG = logging.getLogger(__name__)
 
@@ -65,8 +70,9 @@ class RayDogNodeProvider(NodeProvider):
         Called by Ray to provide nodes for the cluster.
         """
 
-        # logger.setLevel(logging.DEBUG)
-        # cli_logger.configure(verbosity=2)
+        # ToDo: Remove
+        LOG.setLevel(logging.DEBUG)
+        cli_logger.configure(verbosity=2)
 
         LOG.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
@@ -86,9 +92,9 @@ class RayDogNodeProvider(NodeProvider):
 
         # Work out whether this is the head node (i.e., autoscaling config
         # provided & running as the YD agent)
-        configfile = self._get_autoscaling_config_option()
-        if configfile:
-            self._basepath = os.path.dirname(configfile)
+        config_file = self._get_autoscaling_config_option()
+        if config_file:
+            self._basepath = os.path.dirname(config_file)
             self._on_head_node = self._is_running_as_yd_agent()
         else:
             self._basepath = "."
@@ -97,7 +103,6 @@ class RayDogNodeProvider(NodeProvider):
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
             self._tag_store.connect(None, TAG_SERVER_PORT, self._auth_config)
-
             self._raydog = AutoRayDog(provider_config, cluster_name, self._tag_store)
 
             # Make sure that YellowDog knows about this cluster
@@ -546,14 +551,14 @@ class AutoRayDog:
 
         self._namespace = provider_config["namespace"]
         self._cluster_name = cluster_name
-        self._cluster_tag = cluster_name
+        self._cluster_tag = provider_config.get("tag", "")  # Optional
 
         self._tag_store = tag_store
 
         self._worker_pools = {}
-        self._work_requirement_id: str = None
+        self._work_requirement_id: str | None = None
 
-        # Pick an ID for this run, to avoid name clashes
+        # Generate a postfix for the cluster name, to avoid name clashes
         self._uniqueid = "".join(
             random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8)
         )
@@ -606,7 +611,7 @@ class AutoRayDog:
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
             createNodeWorkers=NodeWorkerTarget.per_node(1),
             minNodes=0,
-            maxNodes=node_config.get("max_nodes", DEFAULT_MAX_NODES_IN_WORKER_POOL),
+            maxNodes=MAX_NODES_IN_WORKER_POOL,
             workerTag=flavour,
             metricsEnabled=metrics_enabled,
             idleNodeShutdown=AutoShutdown(
@@ -662,6 +667,7 @@ class AutoRayDog:
     def find_raydog_cluster(self) -> bool:
         """
         Try to find an existing RayDog cluster in YellowDog.
+        Return True if the cluster was found, False otherwise.
         """
 
         # Is there a live work requirement with the right name?
@@ -803,25 +809,31 @@ class AutoRayDog:
     @staticmethod
     def _parse_timespan(timespan: str | None) -> timedelta | None:
         """
-        Parse a string representing a time span. If it ends with 'd' its in days,
+        Parse a string representing a timespan. If it ends with 'd', it's in days,
         'h' is hours, 'm' is minutes, 's' (or nothing) is seconds.
         """
         if timespan is None:
             return None
 
-        last_char = timespan[-1].lower()
-        if last_char in "dhms":
-            duration = float(timespan[0:-1])
-            if last_char == "d":
-                return timedelta(days=duration)
-            elif last_char == "h":
-                return timedelta(hours=duration)
-            elif last_char == "m":
-                return timedelta(minutes=duration)
-            elif last_char == "s":
-                return timedelta(seconds=duration)
-        else:
-            return timedelta(seconds=float(timespan))
+        try:
+            last_char = timespan[-1].lower()
+            if last_char in "dhms":
+                duration = float(timespan[0:-1])
+                if last_char == "d":
+                    return timedelta(days=duration)
+                elif last_char == "h":
+                    return timedelta(hours=duration)
+                elif last_char == "m":
+                    return timedelta(minutes=duration)
+                elif last_char == "s":
+                    return timedelta(seconds=duration)
+            else:
+                return timedelta(seconds=float(timespan))
+        except Exception as e:
+            raise Exception(
+                f"Invalid duration '{timespan}': {e}; "
+                f"durations should be  of form '<float>{{dhms}}'"
+            )
 
     def create_head_node(self, flavour: str, ray_start_script: str) -> str:
         """
