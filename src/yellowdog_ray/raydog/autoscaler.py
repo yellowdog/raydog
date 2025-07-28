@@ -362,7 +362,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         Terminates a set of nodes.
         """
         LOG.debug(f"terminate_nodes {node_ids}")
-        if self._raydog.head_node_id in node_ids:
+        if self._raydog.head_node_task_id in node_ids:
             # if the head node is being terminated, just shut down the cluster
             self._raydog.shut_down()
             for node_id in node_ids:
@@ -399,7 +399,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         if not self._cmd_runner:
             self._cmd_runner = self.get_command_runner(
                 "Head Node",
-                self._raydog.head_node_id,
+                self._raydog.head_node_task_id,
                 self._auth_config,
                 self.cluster_name,
                 subprocess,
@@ -579,7 +579,7 @@ class AutoRayDog:
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
 
-        self.head_node_id: str | None = None
+        self.head_node_task_id: str | None = None
 
     def has_worker_pool(self, flavour: str) -> bool:
         """
@@ -648,11 +648,11 @@ class AutoRayDog:
         """
 
         # Load extra environment variables from a .env file if it exists;
-        # do not override existing variables
+        # do not override existing variables (environment takes precedence)
         load_dotenv(verbose=False, override=False)
 
         # YellowDog API URL and Application credentials
-        self._api_url = os.getenv("YD_API_URL", YD_DEFAULT_API_URL)
+        self._api_url = os.getenv(YD_API_URL_VAR, YD_DEFAULT_API_URL)
         self._api_key_id = os.getenv(YD_API_KEY_ID_VAR)
         self._api_key_secret = os.getenv(YD_API_KEY_SECRET_VAR)
 
@@ -713,7 +713,7 @@ class AutoRayDog:
         head_task: Task = self._get_tasks_in_task_group(head_task_group.id).list_all()[
             0
         ]
-        self.head_node_id = head_task.id
+        self.head_node_task_id = head_task.id
 
         # Find which worker pools already exist
         worker_pools: SearchClient[WorkerPoolSummary] = (
@@ -892,9 +892,11 @@ class AutoRayDog:
             name="head_node_task",
         )
 
-        self.head_node_id = self.yd_client.work_client.add_tasks_to_task_group_by_id(
-            work_requirement.taskGroups[0].id, [head_node_task]
-        )[0].id
+        self.head_node_task_id = (
+            self.yd_client.work_client.add_tasks_to_task_group_by_id(
+                work_requirement.taskGroups[0].id, [head_node_task]
+            )[0].id
+        )
 
         # Wait for the head node to start
         if self._build_timeout:
@@ -904,7 +906,9 @@ class AutoRayDog:
             timed_out = lambda: False
 
         while True:
-            head_task = self.yd_client.work_client.get_task_by_id(self.head_node_id)
+            head_task = self.yd_client.work_client.get_task_by_id(
+                self.head_node_task_id
+            )
             if head_task.status == TaskStatus.EXECUTING:
                 break
 
