@@ -112,21 +112,27 @@ class RayDogNodeProvider(NodeProvider):
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
             self._tag_store.connect(None, TAG_SERVER_PORT, self._auth_config)
-            self._raydog = AutoRayDog(provider_config, cluster_name, self._tag_store)
+            self._auto_raydog = AutoRayDog(
+                provider_config, cluster_name, self._tag_store
+            )
 
             # Make sure that YellowDog knows about this cluster
-            if not self._raydog.find_raydog_cluster():
+            if not self._auto_raydog.find_raydog_cluster():
                 raise Exception(f"Failed to find info in YellowDog for {cluster_name}")
 
         else:  # Running on a client node
-            self._raydog = AutoRayDog(provider_config, cluster_name, self._tag_store)
+            self._auto_raydog = AutoRayDog(
+                provider_config, cluster_name, self._tag_store
+            )
 
             # Try to find an existing cluster
-            if self._raydog.find_raydog_cluster():
+            if self._auto_raydog.find_raydog_cluster():
                 LOG.debug(f"Found an existing head node")
                 # Get the tags from an existing head node
                 self._tag_store.connect(
-                    self._raydog.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
+                    self._auto_raydog.head_node_public_ip,
+                    TAG_SERVER_PORT,
+                    self._auth_config,
                 )
             else:
                 # Ray will create a new head node ... later
@@ -251,7 +257,7 @@ class RayDogNodeProvider(NodeProvider):
 
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
-        if not self._raydog.has_worker_pool(flavour):
+        if not self._auto_raydog.has_worker_pool(flavour):
             node_init_script = self._get_script("initialization_script")
 
             # Valkey must be installed on the head node
@@ -264,7 +270,7 @@ tar -xf valkey-$VALKEY_VERSION-jammy-$CPU.tar.gz  -C $YD_AGENT_HOME
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 """
             # Create the YellowDog worker pool
-            self._raydog.create_worker_pool(
+            self._auto_raydog.create_worker_pool(
                 flavour=flavour,
                 node_config=node_config,
                 count=count,
@@ -275,7 +281,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         # Start the required tasks
         if node_type == "head":
             # Create a head node
-            head_id = self._raydog.create_head_node(
+            head_id = self._auto_raydog.create_head_node(
                 flavour=flavour,
                 ray_start_script=self._get_script("head_start_ray_script"),
             )
@@ -301,7 +307,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                     cmd_runner.run_rsync_up(filename, f"~/{filename}")
         else:
             # Create worker nodes
-            new_nodes = self._raydog.create_worker_nodes(
+            new_nodes = self._auto_raydog.create_worker_nodes(
                 flavour=flavour,
                 ray_start_script=self._get_script("worker_start_ray_script"),
                 count=count,
@@ -335,7 +341,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         Get the public & private IP addresses from YellowDog.
         """
-        public_ip, private_ip = self._raydog.get_ip_addresses(node_id)
+        public_ip, private_ip = self._auto_raydog.get_ip_addresses(node_id)
 
         # Add to the tag store
         self._tag_store.update_tags(
@@ -353,7 +359,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         Terminates the specified node.
         """
         LOG.debug(f"terminate_node {node_id}")
-        self._raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
+        self._auto_raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
         self._tag_store.update_tags(node_id, {"terminated": "true"})
         # ToDo: can we delete the tags for terminated nodes, without creating sync issues?
 
@@ -362,9 +368,9 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         Terminates a set of nodes.
         """
         LOG.debug(f"terminate_nodes {node_ids}")
-        if self._raydog.head_node_task_id in node_ids:
+        if self._auto_raydog.head_node_task_id in node_ids:
             # if the head node is being terminated, just shut down the cluster
-            self._raydog.shut_down()
+            self._auto_raydog.shut_down()
             for node_id in node_ids:
                 self._tag_store.update_tags(node_id, {"terminated": "true"})
         else:
@@ -399,7 +405,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         if not self._cmd_runner:
             self._cmd_runner = self.get_command_runner(
                 "Head Node",
-                self._raydog.head_node_task_id,
+                self._auto_raydog.head_node_task_id,
                 self._auth_config,
                 self.cluster_name,
                 subprocess,
