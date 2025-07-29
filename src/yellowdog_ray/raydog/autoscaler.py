@@ -587,6 +587,9 @@ class AutoRayDog:
 
         self.head_node_task_id: str | None = None
 
+        self.head_node_public_ip: str | None = None
+        self.head_node_private_ip: str | None = None
+
     def has_worker_pool(self, flavour: str) -> bool:
         """
         Is there an existing worker pool for this type of node?
