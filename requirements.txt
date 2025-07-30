@@ -1,4 +1,5 @@
 dotenv
 ray[client]
+redis
 sshtunnel
-yellowdog-sdk >= 9.3.2
+yellowdog-sdk >= 9.4.0
