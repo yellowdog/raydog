@@ -785,10 +785,10 @@ class AutoRayDog:
             else:
                 break
 
-        ydnodeid: str = self._get_node_id_for_task(task)
-        ydnode: Node = self.yd_client.worker_pool_client.get_node_by_id(ydnodeid)
+        yd_node_id: str = self._get_node_id_for_task(task)
+        yd_node: Node = self.yd_client.worker_pool_client.get_node_by_id(yd_node_id)
 
-        return (ydnode.details.publicIpAddress, ydnode.details.privateIpAddress)
+        return yd_node.details.publicIpAddress, yd_node.details.privateIpAddress
 
     def shut_down(self) -> None:
         """
