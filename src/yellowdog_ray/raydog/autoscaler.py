@@ -631,7 +631,7 @@ class AutoRayDog:
             createNodeWorkers=NodeWorkerTarget.per_node(1),
             minNodes=0,
             maxNodes=MAX_NODES_IN_WORKER_POOL,
-            workerTag=flavour,
+            workerTag=f"{flavour}_{self._uniqueid}",
             metricsEnabled=metrics_enabled,
             idleNodeShutdown=AutoShutdown(
                 enabled=True,
@@ -875,7 +875,7 @@ class AutoRayDog:
                         finishIfAnyTaskFailed=True,
                         runSpecification=RunSpecification(
                             taskTypes=[TASK_TYPE],
-                            workerTags=[flavour],
+                            workerTags=[f"{flavour}_{self._uniqueid}"],
                             namespaces=[self._namespace],
                             exclusiveWorkers=True,
                             taskTimeout=self._cluster_lifetime,
@@ -967,7 +967,7 @@ class AutoRayDog:
                     finishIfAllTasksFinished=False,
                     runSpecification=RunSpecification(
                         taskTypes=[TASK_TYPE],
-                        workerTags=[flavour],
+                        workerTags=[f"{flavour}_{self._uniqueid}"],
                         namespaces=[self._namespace],
                         exclusiveWorkers=True,
                         taskTimeout=self._cluster_lifetime,
