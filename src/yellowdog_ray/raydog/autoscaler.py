@@ -31,6 +31,7 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
+    TaskGroupStatus,
     TaskSearch,
     TaskStatus,
     WorkerPool,
@@ -591,6 +592,11 @@ class AutoRayDog:
         self.head_node_public_ip: str | None = None
         self.head_node_private_ip: str | None = None
 
+        # Add counter to worker pool task group names to allow
+        # for task groups that have completed; one counter covers
+        # all worker pool types
+        self._worker_task_group_counter = 1
+
     def has_worker_pool(self, flavour: str) -> bool:
         """
         Is there an existing worker pool for this type of node?
@@ -743,6 +749,7 @@ class AutoRayDog:
 
         worker_pool_prefix = f"{self._cluster_name}-{self._uniqueid}-"
         for worker_pool in worker_pools.iterate():
+            # ToDo: Should check the worker pool is in a useable state
             if worker_pool.name.startswith(worker_pool_prefix):
                 flavour = worker_pool.name.removeprefix(worker_pool_prefix)
                 self._worker_pools[flavour] = worker_pool.id
@@ -873,6 +880,7 @@ class AutoRayDog:
                         name="head-node",
                         tag=flavour,
                         finishIfAnyTaskFailed=True,
+                        finishIfAllTasksFinished=True,
                         runSpecification=RunSpecification(
                             taskTypes=[TASK_TYPE],
                             workerTags=[f"{flavour}_{self._uniqueid}"],
@@ -948,10 +956,14 @@ class AutoRayDog:
             )
         )
 
-        # Look for a task group for this node flavour
+        # Look for a task group for this node flavour that is in a suitable state
+        # to have worker node tasks added
         task_group: TaskGroup | None = None
         for tg in work_requirement.taskGroups:
-            if tg.tag == flavour:
+            if tg.tag == flavour and tg.status in [
+                TaskGroupStatus.RUNNING,
+                TaskStatus.PENDING,
+            ]:
                 task_group = tg
                 break
 
@@ -961,10 +973,10 @@ class AutoRayDog:
 
             work_requirement.taskGroups.append(
                 TaskGroup(
-                    name=f"worker-nodes-{flavour}",
+                    name=f"worker-nodes-{flavour}-{self._worker_task_group_counter}",
                     tag=flavour,
                     finishIfAnyTaskFailed=False,
-                    finishIfAllTasksFinished=False,
+                    finishIfAllTasksFinished=True,
                     runSpecification=RunSpecification(
                         taskTypes=[TASK_TYPE],
                         workerTags=[f"{flavour}_{self._uniqueid}"],
@@ -974,6 +986,7 @@ class AutoRayDog:
                     ),
                 )
             )
+            self._worker_task_group_counter += 1
 
             work_requirement = self.yd_client.work_client.update_work_requirement(
                 work_requirement
