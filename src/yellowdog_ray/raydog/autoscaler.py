@@ -45,7 +45,7 @@ from yellowdog_client.platform_client import PlatformClient
 
 TASK_TYPE = "bash"
 
-HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS = 10.0
+HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
 
 TAG_SERVER_PORT = 16667
 
@@ -57,7 +57,7 @@ IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
 # The 'max_workers' property in the autoscaler YAML will determine
 # the actual maximum size of the worker pool; this prevents YellowDog
 # imposing a separate limit
-MAX_NODES_IN_WORKER_POOL = 10000
+MAX_NODES_IN_WORKER_POOL = 100000
 
 # API URL and Application credential vars.
 YD_API_URL_VAR = "YD_API_URL"
@@ -143,6 +143,7 @@ class RayDogNodeProvider(NodeProvider):
         """
         Detect when autoscaler is running under the YellowDog agent.
         """
+        # ToDo: there's no hard requirement for this to be the username
         return (os.environ.get("USER") == "yd-agent") or (
             os.environ.get("LOGNAME") == "yd-agent"
         )
@@ -927,7 +928,7 @@ class AutoRayDog:
                     "Timeout waiting for Ray head node task to enter EXECUTING state"
                 )
 
-            sleep(HEAD_NODE_TASK_POLLING_INTERVAL_SECONDS)
+            sleep(HEAD_NODE_TASK_POLLING_INTERVAL.total_seconds())
 
         return head_task.id
 
