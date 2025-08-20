@@ -422,7 +422,7 @@ class RayDogCluster:
 
     def build(
         self, head_node_build_timeout: timedelta | None = None
-    ) -> (str, str | None):
+    ) -> tuple[str, str | None]:
         """
         Build the cluster. This method will block until the Ray head node
         is ready, and optionally also the observability node.
