@@ -314,7 +314,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 node_config=node_config,
                 count=count,
                 userdata=node_init_script,
-                metrics_enabled=True,
+                metrics_enabled=node_config.get("metrics_enabled", False),
             )
 
         # Start the required tasks
