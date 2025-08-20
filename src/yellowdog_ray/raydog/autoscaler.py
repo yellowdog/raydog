@@ -53,7 +53,6 @@ TAG_SERVER_PORT = 16667
 # Shut down nodes quickly, because the Ray autoscaler will
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
-IDLE_POOL_YD_SHUTDOWN = timedelta(minutes=60.0)
 
 # The 'max_workers' property in the autoscaler YAML will determine
 # the actual maximum size of the worker pool; this prevents YellowDog
@@ -645,7 +644,7 @@ class AutoRayDog:
             ),
             idlePoolShutdown=AutoShutdown(
                 enabled=True,
-                timeout=IDLE_POOL_YD_SHUTDOWN,
+                timeout=self._cluster_lifetime,
             ),
         )
 
