@@ -17,6 +17,11 @@ from dotenv import load_dotenv
 from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
+from ray.autoscaler.tags import (
+    NODE_KIND_HEAD,
+    TAG_RAY_NODE_KIND,
+    TAG_RAY_USER_NODE_TYPE,
+)
 from requests import HTTPError
 from sshtunnel import SSHTunnelForwarder
 from yellowdog_client.common import SearchClient
@@ -45,10 +50,9 @@ from yellowdog_client.model import (
 from yellowdog_client.platform_client import PlatformClient
 
 TASK_TYPE = "bash"
-
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
-
 TAG_SERVER_PORT = 16667
+LOCALHOST = "127.0.0.1"
 
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
@@ -59,11 +63,41 @@ IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
 # imposing a separate limit
 MAX_NODES_IN_WORKER_POOL = 100000
 
-# API URL and Application credential vars.
+# API URL and Application Key/Secret
 YD_API_URL_VAR = "YD_API_URL"
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 YD_API_KEY_ID_VAR = "YD_API_KEY_ID"
 YD_API_KEY_SECRET_VAR = "YD_API_KEY_SECRET"
+
+# Provider configuration property names
+#   Required
+PROP_CLUSTER_NAMESPACE = "cluster_namespace"
+PROP_HEAD_START_RAY_SCRIPT = "head_start_ray_script"
+PROP_WORKER_START_RAY_SCRIPT = "worker_start_ray_script"
+PROP_AUTH = "auth"
+#   Optional
+PROP_CLUSTER_TAG = "cluster_tag"
+PROP_CLUSTER_LIFETIME = "cluster_lifetime"
+PROP_BUILD_TIMEOUT = "head_node_build_timeout"
+
+# Node configuration property names
+#   Required
+PROP_CRT = "compute_requirement_template"
+#   Optional
+PROP_IMAGES_ID = "images_id"
+PROP_USERDATA = "userdata"
+PROP_CAPTURE_TASKOUTPUT = "capture_taskoutput"
+PROP_METRICS_ENABLED = "metrics_enabled"
+
+# Tag and value names
+TAG_PUBLIC_IP = "publicip"
+TAG_PRIVATE_IP = "privateip"
+TAG_TERMINATED = "terminated"
+VAL_TRUE = "true"
+
+# Other
+PROP_SSH_USER = "ssh_user"
+PROP_SSH_PRIVATE_KEY = "ssh_private_key"
 
 
 LOG = logging.getLogger(__name__)
@@ -92,12 +126,15 @@ class RayDogNodeProvider(NodeProvider):
         super().__init__(provider_config, cluster_name)
 
         # If running client-side the bootstrap function puts the auth info into provider_config
-        self._auth_config = self.provider_config.get("auth")
+        self._auth_config = self.provider_config.get(PROP_AUTH)
 
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
         self._files_to_upload = []
+
+        self.head_node_public_ip = None
+        self.head_node_private_ip = None
 
         # Work out whether this is the head node (i.e., autoscaling config
         # provided & running as the YD agent)
@@ -181,7 +218,7 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store.refresh()
 
         # Look for nodes that meet the criteria
-        shortlist = self._tag_store.find_matches(None, "terminated", "")
+        shortlist = self._tag_store.find_matches(None, TAG_TERMINATED, "")
         for k, v in tag_filters.items():
             shortlist = self._tag_store.find_matches(shortlist, k, v)
 
@@ -196,7 +233,7 @@ class RayDogNodeProvider(NodeProvider):
         LOG.debug(f"is_running {node_id}")
 
         # True if the node exists but terminated flag isn't set
-        status = self._tag_store.get_tag(node_id, "terminated")
+        status = self._tag_store.get_tag(node_id, TAG_TERMINATED)
         return status == ""
 
     def is_terminated(self, node_id: str) -> bool:
@@ -206,7 +243,7 @@ class RayDogNodeProvider(NodeProvider):
         LOG.debug(f"is_terminated {node_id}")
 
         # True if the node doesn't exist or the terminated flag is set
-        status = self._tag_store.get_tag(node_id, "terminated")
+        status = self._tag_store.get_tag(node_id, TAG_TERMINATED)
         return (status is None) or (status != "")
 
     def node_tags(self, node_id: str) -> dict[str, str]:
@@ -228,7 +265,7 @@ class RayDogNodeProvider(NodeProvider):
         Returns the external IP of the given node.
         """
         LOG.debug(f"external_ip {node_id}")
-        ip = self._tag_store.get_tag(node_id, "publicip")
+        ip = self._tag_store.get_tag(node_id, TAG_PUBLIC_IP)
         if ip:
             return ip
         public_ip, _ = self._get_ip_addresses(node_id)
@@ -239,7 +276,7 @@ class RayDogNodeProvider(NodeProvider):
         Returns the internal IP (Ray IP) of the given node.
         """
         LOG.debug(f"internal_ip {node_id}")
-        ip = self._tag_store.get_tag(node_id, "privateip")
+        ip = self._tag_store.get_tag(node_id, TAG_PRIVATE_IP)
         if ip:
             return ip
         _, private_ip = self._get_ip_addresses(node_id)
@@ -252,9 +289,9 @@ class RayDogNodeProvider(NodeProvider):
         Creates a number of nodes within the namespace.
         """
         LOG.debug(f"create_node {node_config} {tags} {count}")
-        node_type = tags["ray-node-type"]
 
-        flavour = tags["ray-user-node-type"].lower()
+        node_type = tags[TAG_RAY_NODE_KIND]
+        flavour = tags[TAG_RAY_USER_NODE_TYPE].lower()
 
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
@@ -262,7 +299,7 @@ class RayDogNodeProvider(NodeProvider):
             node_init_script = self._get_script("initialization_script")
 
             # Valkey must be installed on the head node
-            if node_type == "head":
+            if node_type == NODE_KIND_HEAD:
                 node_init_script += r"""
 VALKEY_VERSION=8.1.1
 CPU=`arch | sed s/aarch64/arm64/`
@@ -273,6 +310,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             # Create the YellowDog worker pool
             self._auto_raydog.create_worker_pool(
                 flavour=flavour,
+                node_type=node_type,
                 node_config=node_config,
                 count=count,
                 userdata=node_init_script,
@@ -280,11 +318,11 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             )
 
         # Start the required tasks
-        if node_type == "head":
+        if node_type == NODE_KIND_HEAD:
             # Create a head node
             head_id = self._auto_raydog.create_head_node(
                 flavour=flavour,
-                ray_start_script=self._get_script("head_start_ray_script"),
+                ray_start_script=self._get_script(PROP_HEAD_START_RAY_SCRIPT),
             )
 
             # Initialise tags & remember the IP addresses
@@ -310,7 +348,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             # Create worker nodes
             new_nodes = self._auto_raydog.create_worker_nodes(
                 flavour=flavour,
-                ray_start_script=self._get_script("worker_start_ray_script"),
+                ray_start_script=self._get_script(PROP_WORKER_START_RAY_SCRIPT),
                 count=count,
             )
 
@@ -346,7 +384,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
         # Add to the tag store
         self._tag_store.update_tags(
-            node_id, {"privateip": private_ip, "publicip": public_ip}
+            node_id, {TAG_PRIVATE_IP: private_ip, TAG_PUBLIC_IP: public_ip}
         )
 
         # Add to the data used for reverse lookups
@@ -361,7 +399,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         LOG.debug(f"terminate_node {node_id}")
         self._auto_raydog.yd_client.work_client.cancel_task_by_id(node_id, True)
-        self._tag_store.update_tags(node_id, {"terminated": "true"})
+        self._tag_store.update_tags(node_id, {TAG_TERMINATED: VAL_TRUE})
         # ToDo: can we delete the tags for terminated nodes, without creating sync issues?
 
     def terminate_nodes(self, node_ids: list[str]) -> None:
@@ -373,7 +411,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             # if the head node is being terminated, just shut down the cluster
             self._auto_raydog.shut_down()
             for node_id in node_ids:
-                self._tag_store.update_tags(node_id, {"terminated": "true"})
+                self._tag_store.update_tags(node_id, {TAG_TERMINATED: VAL_TRUE})
         else:
             for node_id in node_ids:
                 self.terminate_node(node_id)
@@ -503,9 +541,9 @@ class TagStore:
             LOG.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
             tunnel = SSHTunnelForwarder(
                 remote_server,
-                ssh_username=auth_config["ssh_user"],
-                ssh_pkey=auth_config["ssh_private_key"],
-                remote_bind_address=("127.0.0.1", port),
+                ssh_username=auth_config[PROP_SSH_USER],
+                ssh_pkey=auth_config[PROP_SSH_PRIVATE_KEY],
+                remote_bind_address=(LOCALHOST, port),
             )
             tunnel.start()
             LOG.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
@@ -565,15 +603,15 @@ class AutoRayDog:
     ):
         self._is_shut_down = False
 
-        self._namespace = provider_config["namespace"]
+        self._namespace = provider_config[PROP_CLUSTER_NAMESPACE]
         self._cluster_name = cluster_name
-        self._cluster_tag = provider_config.get("tag", "")  # Optional
+        self._cluster_tag = provider_config.get(PROP_CLUSTER_TAG, "")  # Optional
 
         self._tag_store: TagStore = tag_store
 
         # Store the worker pool IDs for each node flavour
         self._worker_pools = {}
-        
+
         # Store the work requirement ID for this cluster
         self._work_requirement_id: str | None = None
 
@@ -583,8 +621,12 @@ class AutoRayDog:
         )
 
         # Establish timeouts
-        self._cluster_lifetime = self._parse_duration(provider_config.get("lifetime"))
-        self._build_timeout = self._parse_duration(provider_config.get("build_timeout"))
+        self._cluster_lifetime: timedelta | None = self._parse_duration(
+            provider_config.get(PROP_CLUSTER_LIFETIME)
+        )
+        self._build_timeout: timedelta | None = self._parse_duration(
+            provider_config.get(PROP_BUILD_TIMEOUT)
+        )
 
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
@@ -610,6 +652,7 @@ class AutoRayDog:
     def create_worker_pool(
         self,
         flavour: str,
+        node_type: str,
         node_config: dict[str, Any],
         count: int,
         userdata: str,
@@ -621,8 +664,8 @@ class AutoRayDog:
 
         LOG.debug(f"create_worker_pool {flavour}")
 
-        compute_requirement_template_id = node_config["compute_requirement_template"]
-        images_id = node_config.get("images_id", None)
+        compute_requirement_template_id = node_config[PROP_CRT]
+        images_id = node_config.get(PROP_IMAGES_ID, None)
 
         worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
 
@@ -640,7 +683,7 @@ class AutoRayDog:
         provisioned_worker_pool_properties = ProvisionedWorkerPoolProperties(
             createNodeWorkers=NodeWorkerTarget.per_node(1),
             minNodes=0,
-            maxNodes=MAX_NODES_IN_WORKER_POOL,
+            maxNodes=1 if node_type == NODE_KIND_HEAD else MAX_NODES_IN_WORKER_POOL,
             workerTag=f"{flavour}_{self._uniqueid}",
             metricsEnabled=metrics_enabled,
             idleNodeShutdown=AutoShutdown(
