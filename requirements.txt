@@ -1,5 +1,6 @@
-dotenv
+python-dotenv
 ray[client]
 redis
+requests
 sshtunnel
 yellowdog-sdk >= 9.4.0
