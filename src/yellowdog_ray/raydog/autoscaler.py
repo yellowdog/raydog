@@ -50,9 +50,9 @@ HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
 
 TAG_SERVER_PORT = 16667
 
-# Shut down nodes quickly, because the Ray autoscaler will
+# Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
-IDLE_NODE_YD_SHUTDOWN = timedelta(minutes=1.0)
+IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
 
 # The 'max_workers' property in the autoscaler YAML will determine
 # the actual maximum size of the worker pool; this prevents YellowDog
@@ -569,9 +569,12 @@ class AutoRayDog:
         self._cluster_name = cluster_name
         self._cluster_tag = provider_config.get("tag", "")  # Optional
 
-        self._tag_store = tag_store
+        self._tag_store: TagStore = tag_store
 
+        # Store the worker pool IDs for each node flavour
         self._worker_pools = {}
+        
+        # Store the work requirement ID for this cluster
         self._work_requirement_id: str | None = None
 
         # Generate a postfix for the cluster name, to avoid name clashes
@@ -579,15 +582,17 @@ class AutoRayDog:
             random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8)
         )
 
-        # Determine how long to wait for things
+        # Establish timeouts
         self._cluster_lifetime = self._parse_duration(provider_config.get("lifetime"))
         self._build_timeout = self._parse_duration(provider_config.get("build_timeout"))
 
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
 
+        # The YD Task ID for the head node task
         self.head_node_task_id: str | None = None
 
+        # Head node IP addresses
         self.head_node_public_ip: str | None = None
         self.head_node_private_ip: str | None = None
 
