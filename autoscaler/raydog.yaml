@@ -1,15 +1,16 @@
 # Configuration for the YellowDog RayDog autoscaler
 provider:
-  type: external
-  module: raydog.autoscaler.RayDogNodeProvider
+  type: "external"
+  module: yellowdog_ray.raydog.autoscaler.RayDogNodeProvider
   
-  namespace: raydog-example
-  lifetime: 60m
-  build_timeout: 10m
+  cluster_namespace: "raydog-auto-pwt"
+  cluster_tag: "raydog-pwt"
+  cluster_lifetime: 30m
+  head_node_build_timeout: 10m
 
-  foreground_node_launch: True
+  # foreground_node_launch: True
 
-  initialization_script: file:example-node-setup.sh
+#  initialization_script: file:example-node-setup.sh
 
   head_start_ray_script: 
   - "#!/bin/bash -x"
@@ -19,7 +20,7 @@ provider:
   - trap "ray stop; echo Ray stopped" EXIT
   - set -euo pipefail
   - ray stop
-  - ray --logging-level debug  start --disable-usage-stats --head --port=6379 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
+  - ray start --disable-usage-stats --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=0 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
  
   worker_start_ray_script:
   - "#!/bin/bash"
@@ -29,13 +30,13 @@ provider:
   - ray stop
   - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
 
-  # Have to duplicate the auth setttings, so that the RayDog provider can access the tag store
+  # Have to duplicate the auth settings, so that the RayDog provider can access the tag store
   auth:
     ssh_user: yd-agent
-    ssh_private_key: ../private-key
+    ssh_private_key: private-key
 
-# A unique identifier for the head node and workers of this cluster. Not case sensitive
-cluster_name: raydog-123ABCxyz
+# A name for the head node and workers of this cluster (not case-sensitive)
+cluster_name: raydog-cluster-auto-pwt
 
 # The types of nodes that are available
 available_node_types:
@@ -44,16 +45,27 @@ available_node_types:
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead
       images_id: ami-0c6175878f7e01e70
-      max_nodes: 1
+      userdata: file:example-node-setup.sh
+      metrics_enabled: true
 
   ray_worker_small:
     resources: { "CPU": 1 }
-    min_workers: 1
-    max_workers: 100    
+    min_workers: 0
+    max_workers: 3
     node_config:
       compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker
       images_id: ami-0c6175878f7e01e70
-      max_nodes: 100
+      userdata: file:example-node-setup.sh
+      metrics_enabled: true
+
+#  ray_worker_small_2:
+#    resources: { "CPU": 1 }
+#    min_workers: 0
+#    max_workers: 5
+#    node_config:
+#      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker
+#      images_id: ami-0c6175878f7e01e70
+#      max_nodes: 5
 
 # Specify the node type of the head node (as configured above).
 head_node_type: ray_head_default
@@ -61,20 +73,19 @@ head_node_type: ray_head_default
 # How Ray will authenticate with newly launched nodes.
 auth:
   ssh_user: yd-agent
-  ssh_private_key: ../private-key
+  ssh_private_key: private-key
 
-# The maximum number of workers nodes to launch in addition to the head
-# node.
+# The maximum number of workers nodes to launch in addition to the head node
 max_workers: 1000
 
 # The autoscaler will scale up the cluster faster with higher upscaling speed.
-# E.g., if the task requires adding more nodes then autoscaler will gradually
+# E.g., if the task requires additional nodes, the autoscaler will gradually
 # scale up the cluster in chunks of upscaling_speed*currently_running_nodes.
 # This number should be > 0.
 upscaling_speed: 1.0
 
 # If a node is idle for this many minutes, it will be removed.
-idle_timeout_minutes: 2
+idle_timeout_minutes: 1
 
 # Files or directories to copy to the head and worker nodes. The format is a
 # dictionary from REMOTE_PATH: LOCAL_PATH, e.g.
