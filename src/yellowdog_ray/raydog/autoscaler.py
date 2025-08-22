@@ -79,6 +79,7 @@ PROP_AUTH = "auth"
 PROP_CLUSTER_TAG = "cluster_tag"
 PROP_CLUSTER_LIFETIME = "cluster_lifetime"
 PROP_BUILD_TIMEOUT = "head_node_build_timeout"
+PROP_REQUIRED_FILES = "required_files"
 
 # Node configuration property names
 #   Required
@@ -132,7 +133,7 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
-        self._files_to_upload = set()
+        self._files_to_upload = set(provider_config.get(PROP_REQUIRED_FILES, []))
 
         self.head_node_public_ip = None
         self.head_node_private_ip = None
