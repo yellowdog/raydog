@@ -98,6 +98,7 @@ VAL_TRUE = "true"
 # Other
 PROP_SSH_USER = "ssh_user"
 PROP_SSH_PRIVATE_KEY = "ssh_private_key"
+SCRIPT_FILE_PREFIX = "file:"
 
 
 LOG = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
-        self._files_to_upload = []
+        self._files_to_upload = set()
 
         self.head_node_public_ip = None
         self.head_node_private_ip = None
@@ -297,7 +298,7 @@ class RayDogNodeProvider(NodeProvider):
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
         if not self._auto_raydog.has_worker_pool(flavour):
-            node_init_script = self._get_script("initialization_script")
+            node_init_script = self._load_script(node_config.get(PROP_USERDATA))
 
             # Valkey must be installed on the head node
             if node_type == NODE_KIND_HEAD:
@@ -337,7 +338,8 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 self.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
             )
 
-            # Upload any extra scripts that the head node might need to understand the autoscaler config file
+            # Upload any extra scripts that the head node might need to
+            # understand the autoscaler config file
             if self._files_to_upload:
                 cmd_runner: CommandRunnerInterface = (
                     self._get_head_node_command_runner()
@@ -347,7 +349,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                     cmd_runner.run_rsync_up(filename, f"~/{filename}")
         else:
             # Create worker nodes
-            new_nodes = self._auto_raydog.create_worker_nodes(
+            new_nodes = self._auto_raydog.create_worker_node_tasks(
                 flavour=flavour,
                 ray_start_script=self._get_script(PROP_WORKER_START_RAY_SCRIPT),
                 count=count,
@@ -452,6 +454,28 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             )
         return self._cmd_runner
 
+    def _load_script(self, script_or_script_path: str | None) -> str:
+        """
+        Load a script either directly or from a file.
+        If None, return an empty string.
+        """
+
+        if script_or_script_path is None:
+            return ""
+
+        if not script_or_script_path.startswith(SCRIPT_FILE_PREFIX):
+            return script_or_script_path
+
+        script_path = script_or_script_path[len(SCRIPT_FILE_PREFIX) :].lstrip().rstrip()
+        full_script_path = os.path.join(self._basepath, script_path)
+        if not os.path.exists(full_script_path):
+            raise Exception(f"Script file '{full_script_path}' does not exist")
+
+        self._files_to_upload.add(script_path)
+
+        with open(full_script_path) as f:
+            return f.read()
+
     def _get_script(self, config_name: str) -> str:
         """
         Either read a script from a file or create it from a list of lines.
@@ -466,7 +490,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             if isinstance(script, str) and script.startswith("file:"):
                 filename = script[5:]
 
-                self._files_to_upload.append(filename)
+                self._files_to_upload.add(filename)
                 with open(os.path.join(self._basepath, filename)) as f:
                     script = f.read()
 
@@ -979,14 +1003,14 @@ class AutoRayDog:
 
         return head_task.id
 
-    def create_worker_nodes(
+    def create_worker_node_tasks(
         self, flavour: str, ray_start_script: str, count: int
     ) -> list[str]:
         """
-        Create the worker nodes for the cluster.
+        Create the worker node tasks for a given worker pool.
         """
 
-        LOG.debug(f"create_worker_nodes {flavour} {count}")
+        LOG.debug(f"create_worker_node tasks {flavour} {count}")
 
         # Get the latest state of the work requirement from YellowDog
         work_requirement: WorkRequirement = (
@@ -995,8 +1019,8 @@ class AutoRayDog:
             )
         )
 
-        # Look for a task group for this node flavour that is in a suitable state
-        # to have worker node tasks added
+        # Look for a task group for this node flavour in a
+        # suitable state to have worker node tasks added
         task_group: TaskGroup | None = None
         for tg in work_requirement.taskGroups:
             if tg.tag == flavour and tg.status in [
