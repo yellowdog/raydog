@@ -190,6 +190,7 @@ class RayDogNodeProvider(NodeProvider):
         """
         Get the path for the autoscaling config file, if set.
         """
+        # ToDo: this is unsafe for the case with no '='
         for arg in sys.argv:
             if arg.startswith("--autoscaling-config="):
                 return arg.split("=")[1]
@@ -373,7 +374,6 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         Optionally may throw a ray.autoscaler.node_launch_exception.NodeLaunchException.
         """
         LOG.info(f"create_node_with_resources_and_labels {node_config} {tags} {count}")
-
         return self.create_node(node_config, tags, count)
 
     def _get_ip_addresses(self, node_id: str) -> tuple[str, str]:
@@ -451,14 +451,6 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 False,
             )
         return self._cmd_runner
-
-    @staticmethod
-    def _read_file(filename: str) -> str:
-        """
-        Read the contents of a file.
-        """
-        with open(filename) as f:
-            return f.read()
 
     def _get_script(self, config_name: str) -> str:
         """
