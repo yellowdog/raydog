@@ -50,11 +50,6 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-TASK_TYPE = "bash"
-HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
-TAG_SERVER_PORT = 16667
-LOCALHOST = "127.0.0.1"
-
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
@@ -97,10 +92,17 @@ TAG_PRIVATE_IP = "privateip"
 TAG_TERMINATED = "terminated"
 VAL_TRUE = "true"
 
-# Other
+# Other constants
+TASK_TYPE = "bash"
+HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
+TAG_SERVER_PORT = 16667
+LOCALHOST = "127.0.0.1"
 PROP_SSH_USER = "ssh_user"
 PROP_SSH_PRIVATE_KEY = "ssh_private_key"
 SCRIPT_FILE_PREFIX = "file:"
+HEAD_NODE_NAME = "head-node"
+RAY_HEAD_IP_ENV_VAR = "RAY_HEAD_IP"
+PROP_PROVIDER = "provider"
 
 
 LOG = logging.getLogger(__name__)
@@ -441,8 +443,8 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
         """
         LOG.debug(f"bootstrap_config {cluster_config}")
 
-        # copy the global auth info to the provider, so the constructor sees it
-        cluster_config["provider"]["auth"] = cluster_config["auth"].copy()
+        # Copy the global auth info to the provider, so the constructor sees it
+        cluster_config[PROP_PROVIDER][PROP_AUTH] = cluster_config[PROP_AUTH].copy()
         return cluster_config
 
     def _get_head_node_command_runner(self) -> CommandRunnerInterface:
@@ -945,7 +947,7 @@ class AutoRayDog:
                 tag=self._cluster_tag,
                 taskGroups=[
                     TaskGroup(
-                        name="head-node",
+                        name=HEAD_NODE_NAME,
                         tag=flavour,
                         finishIfAnyTaskFailed=True,
                         finishIfAllTasksFinished=True,
@@ -1073,7 +1075,7 @@ class AutoRayDog:
                     taskType=TASK_TYPE,
                     taskData=ray_start_script,
                     arguments=["taskdata.txt"],
-                    environment={"RAY_HEAD_IP": self.head_node_private_ip},
+                    environment={RAY_HEAD_IP_ENV_VAR: self.head_node_private_ip},
                     outputs=(None if capture_taskoutput is False else self._taskoutput),
                 )
             )
