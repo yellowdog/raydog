@@ -508,7 +508,7 @@ class TagStore:
 
     def __init__(self, cluster_name: str):
         self._cluster_name = cluster_name
-        self._redis: redis = None
+        self._redis: redis.Redis | None = None
         self._tags: dict[str, dict] = {}
 
     def find_matches(
