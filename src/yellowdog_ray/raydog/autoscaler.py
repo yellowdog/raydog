@@ -75,7 +75,7 @@ PROP_AUTH = "auth"
 PROP_CLUSTER_TAG = "cluster_tag"
 PROP_CLUSTER_LIFETIME = "cluster_lifetime"
 PROP_BUILD_TIMEOUT = "head_node_build_timeout"
-PROP_REQUIRED_FILES = "required_files"
+PROP_FILES_TO_UPLOAD = "files_to_upload"
 
 # Node configuration property names
 #   Required
@@ -83,6 +83,7 @@ PROP_CRT = "compute_requirement_template"
 #   Optional
 PROP_IMAGES_ID = "images_id"
 PROP_USERDATA = "userdata"
+PROP_EXTRA_USERDATA = "extra_userdata"
 PROP_CAPTURE_TASKOUTPUT = "capture_taskoutput"
 PROP_METRICS_ENABLED = "metrics_enabled"
 
@@ -136,7 +137,7 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
-        self._files_to_upload = set(provider_config.get(PROP_REQUIRED_FILES, []))
+        self._files_to_upload = set(provider_config.get(PROP_FILES_TO_UPLOAD, []))
 
         self.head_node_public_ip = None
         self.head_node_private_ip = None
@@ -302,24 +303,19 @@ class RayDogNodeProvider(NodeProvider):
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
         if not self._auto_raydog.has_worker_pool(flavour):
-            node_init_script = self._load_script(node_config.get(PROP_USERDATA))
+            userdata_script = (
+                self._load_script(node_config.get(PROP_USERDATA))
+                + "\n"
+                + self._load_script(node_config.get(PROP_EXTRA_USERDATA))
+            )
 
-            # Valkey must be installed on the head node
-            if node_type == NODE_KIND_HEAD:
-                node_init_script += r"""
-VALKEY_VERSION=8.1.1
-CPU=`arch | sed s/aarch64/arm64/`
-curl -O  https://download.valkey.io/releases/valkey-$VALKEY_VERSION-jammy-$CPU.tar.gz
-tar -xf valkey-$VALKEY_VERSION-jammy-$CPU.tar.gz  -C $YD_AGENT_HOME 
-chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
-"""
             # Create the YellowDog worker pool
             self._auto_raydog.create_worker_pool(
                 flavour=flavour,
                 node_type=node_type,
                 node_config=node_config,
                 count=count,
-                userdata=node_init_script,
+                userdata=userdata_script,
                 metrics_enabled=node_config.get(PROP_METRICS_ENABLED, False),
             )
 
@@ -355,7 +351,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                     LOG.debug(f"Uploading {filename}")
                     cmd_runner.run_rsync_up(filename, f"~/{filename}")
         else:
-            # Create worker nodes
+            # Create worker node tasks
             new_nodes = self._auto_raydog.create_worker_node_tasks(
                 flavour=flavour,
                 ray_start_script=self._get_script_from_provider_config(
@@ -817,7 +813,7 @@ class AutoRayDog:
 
         worker_pool_prefix = f"{self._cluster_name}-{self._uniqueid}-"
         for worker_pool in worker_pools.iterate():
-            # ToDo: Should check the worker pool is in a useable state
+            # ToDo: Should check the worker pool is in a usable state
             if worker_pool.name.startswith(worker_pool_prefix):
                 flavour = worker_pool.name.removeprefix(worker_pool_prefix)
                 self._worker_pools[flavour] = worker_pool.id
