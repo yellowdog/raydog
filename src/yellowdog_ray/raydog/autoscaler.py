@@ -37,6 +37,7 @@ from yellowdog_client.model import (
     Task,
     TaskGroup,
     TaskGroupStatus,
+    TaskOutput,
     TaskSearch,
     TaskStatus,
     WorkerPool,
@@ -317,17 +318,18 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                 node_config=node_config,
                 count=count,
                 userdata=node_init_script,
-                metrics_enabled=node_config.get("metrics_enabled", False),
+                metrics_enabled=node_config.get(PROP_METRICS_ENABLED, False),
             )
 
         # Start the required tasks
         if node_type == NODE_KIND_HEAD:
             # Create a head node
-            head_id = self._auto_raydog.create_head_node(
+            head_id = self._auto_raydog.create_head_node_task(
                 flavour=flavour,
                 ray_start_script=self._get_script_from_provider_config(
                     PROP_HEAD_START_RAY_SCRIPT
                 ),
+                capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
             )
 
             # Initialise tags & remember the IP addresses
@@ -358,6 +360,7 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
                     PROP_WORKER_START_RAY_SCRIPT
                 ),
                 count=count,
+                capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
             )
 
             # Initialise tags
@@ -652,6 +655,13 @@ class AutoRayDog:
         # all worker pool types
         self._worker_task_group_counter = 1
 
+        # Used to name tasks; required if taskoutput is to be
+        # captured.
+        self._worker_task_counter = 1
+
+        # For use when 'capture_taskoutput' is specified
+        self._taskoutput = [TaskOutput.from_task_process()]
+
     def has_worker_pool(self, flavour: str) -> bool:
         """
         Is there an existing worker pool for this type of node?
@@ -665,7 +675,7 @@ class AutoRayDog:
         node_config: dict[str, Any],
         count: int,
         userdata: str,
-        metrics_enabled: bool = True,
+        metrics_enabled: bool = False,
     ) -> None:
         """
         Create a new worker pool for the given type of node.
@@ -916,9 +926,11 @@ class AutoRayDog:
 
         return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
 
-    def create_head_node(self, flavour: str, ray_start_script: str) -> str:
+    def create_head_node_task(
+        self, flavour: str, ray_start_script: str, capture_taskoutput: bool = False
+    ) -> str:
         """
-        Create the head node for the cluster.
+        Create the head node task for the cluster.
         """
 
         start_time = datetime.now()
@@ -964,6 +976,7 @@ class AutoRayDog:
                 "YD_API_URL": self._api_url,
             },
             name="head_node_task",
+            outputs=(None if capture_taskoutput is False else self._taskoutput),
         )
 
         self.head_node_task_id = (
@@ -997,7 +1010,11 @@ class AutoRayDog:
         return head_task.id
 
     def create_worker_node_tasks(
-        self, flavour: str, ray_start_script: str, count: int
+        self,
+        flavour: str,
+        ray_start_script: str,
+        count: int,
+        capture_taskoutput: bool = False,
     ) -> list[str]:
         """
         Create the worker node tasks for a given worker pool.
@@ -1024,12 +1041,11 @@ class AutoRayDog:
                 break
 
         # If there isn't one, create it
-        if not task_group:
+        if task_group is None:
             index = len(work_requirement.taskGroups)
-
             work_requirement.taskGroups.append(
                 TaskGroup(
-                    name=f"worker-nodes-{flavour}-{self._worker_task_group_counter}",
+                    name=f"worker-nodes-{flavour}-{str(self._worker_task_group_counter).zfill(3)}",
                     tag=flavour,
                     finishIfAnyTaskFailed=False,
                     finishIfAllTasksFinished=True,
@@ -1043,23 +1059,29 @@ class AutoRayDog:
                 )
             )
             self._worker_task_group_counter += 1
-
             work_requirement = self.yd_client.work_client.update_work_requirement(
                 work_requirement
             )
             task_group = work_requirement.taskGroups[index]
 
         # Add tasks to create worker nodes
-        worker_node_task = Task(
-            taskType=TASK_TYPE,
-            taskData=ray_start_script,
-            arguments=["taskdata.txt"],
-            environment={"RAY_HEAD_IP": self.head_node_private_ip},
-        )
+        new_tasks = []
+        for _ in range(count):
+            new_tasks.append(
+                Task(
+                    name=f"worker-node-task-{str(self._worker_task_counter).zfill(5)}",
+                    taskType=TASK_TYPE,
+                    taskData=ray_start_script,
+                    arguments=["taskdata.txt"],
+                    environment={"RAY_HEAD_IP": self.head_node_private_ip},
+                    outputs=(None if capture_taskoutput is False else self._taskoutput),
+                )
+            )
+            self._worker_task_counter += 1
 
         new_tasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group.id,
-            [worker_node_task for _ in range(count)],
+            new_tasks,
         )
 
         # Return a list of node ids
