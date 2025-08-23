@@ -325,7 +325,9 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             # Create a head node
             head_id = self._auto_raydog.create_head_node(
                 flavour=flavour,
-                ray_start_script=self._get_script(PROP_HEAD_START_RAY_SCRIPT),
+                ray_start_script=self._get_script_from_provider_config(
+                    PROP_HEAD_START_RAY_SCRIPT
+                ),
             )
 
             # Initialise tags & remember the IP addresses
@@ -352,7 +354,9 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             # Create worker nodes
             new_nodes = self._auto_raydog.create_worker_node_tasks(
                 flavour=flavour,
-                ray_start_script=self._get_script(PROP_WORKER_START_RAY_SCRIPT),
+                ray_start_script=self._get_script_from_provider_config(
+                    PROP_WORKER_START_RAY_SCRIPT
+                ),
                 count=count,
             )
 
@@ -455,6 +459,19 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
             )
         return self._cmd_runner
 
+    def _get_script_from_provider_config(self, property_name: str) -> str:
+        """
+        Get a script from the provider config.
+        """
+
+        script = self._scripts.get(property_name)
+        if script is not None:
+            return script
+
+        script = self._load_script(self.provider_config.get(property_name))
+        self._scripts[property_name] = script
+        return script
+
     def _load_script(self, script_or_script_path: str | None) -> str:
         """
         Load a script either directly or from a file.
@@ -476,31 +493,6 @@ chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/valkey*
 
         with open(full_script_path) as f:
             return f.read()
-
-    def _get_script(self, config_name: str) -> str:
-        """
-        Either read a script from a file or create it from a list of lines.
-        """
-
-        script = self._scripts.get(config_name)
-        if script is None:
-            script = self.provider_config.get(config_name)
-            if script is None:
-                return ""
-
-            if isinstance(script, str) and script.startswith("file:"):
-                filename = script[5:]
-
-                self._files_to_upload.add(filename)
-                with open(os.path.join(self._basepath, filename)) as f:
-                    script = f.read()
-
-            elif isinstance(script, list):
-                script = "\n".join(script)
-
-            self._scripts[config_name] = script
-
-        return script
 
 
 class TagStore:
