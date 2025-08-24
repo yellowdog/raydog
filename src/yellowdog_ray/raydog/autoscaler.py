@@ -1084,6 +1084,16 @@ class AutoRayDog:
             if head_task.status == TaskStatus.EXECUTING:
                 break
 
+            if head_task.status in [
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+                TaskStatus.ABORTED,
+                TaskStatus.DISCARDED,
+            ]:
+                raise Exception(
+                    f"Unexpected head node task status: '{head_task.status}'"
+                )
+
             if timed_out():
                 self.shut_down()
                 raise TimeoutError(
