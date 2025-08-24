@@ -567,6 +567,16 @@ class RayDogNodeProvider(NodeProvider):
         with open(full_script_path) as f:
             return f.read()
 
+    def __del__(self) -> None:
+        """
+        Clean up the autoscaler if there's a failure during '__init__()'
+        """
+        LOG.debug("Cleaning up RayDogNodeProvider resources")
+        if hasattr(self, "_tag_store"):
+            self._tag_store.close()
+        if hasattr(self, "_auto_raydog"):
+            self._auto_raydog.shut_down()
+
 
 class TagStore:
     """
