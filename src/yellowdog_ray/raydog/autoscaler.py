@@ -50,15 +50,6 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
-# Shut down nodes immediately, because the Ray autoscaler will
-# already have waited before terminating
-IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
-
-# The 'max_workers' property in the autoscaler YAML will determine
-# the actual maximum size of the worker pool; this prevents YellowDog
-# imposing a separate limit
-MAX_NODES_IN_WORKER_POOL = 100000
-
 # API URL and Application Key/Secret
 YD_API_URL_VAR = "YD_API_URL"
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
@@ -104,6 +95,15 @@ SCRIPT_FILE_PREFIX = "file:"
 HEAD_NODE_NAME = "head-node"
 RAY_HEAD_IP_ENV_VAR = "RAY_HEAD_IP"
 PROP_PROVIDER = "provider"
+
+# Shut down nodes immediately, because the Ray autoscaler will
+# already have waited before terminating
+IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
+
+# The 'max_workers' property in the autoscaler YAML will determine
+# the actual maximum size of the worker pool; this prevents YellowDog
+# imposing a separate limit
+MAX_NODES_IN_WORKER_POOL = 100000
 
 
 LOG = logging.getLogger(__name__)
@@ -485,7 +485,7 @@ class RayDogNodeProvider(NodeProvider):
         if not script_or_script_path.startswith(SCRIPT_FILE_PREFIX):
             return script_or_script_path
 
-        script_path = script_or_script_path[len(SCRIPT_FILE_PREFIX) :].lstrip().rstrip()
+        script_path = script_or_script_path[len(SCRIPT_FILE_PREFIX) :].strip()
         full_script_path = os.path.join(self._basepath, script_path)
         if not os.path.exists(full_script_path):
             raise Exception(f"Script file '{full_script_path}' does not exist")
@@ -1063,19 +1063,20 @@ class AutoRayDog:
             task_group = work_requirement.taskGroups[index]
 
         # Add tasks to create worker nodes
-        new_tasks = []
-        for _ in range(count):
-            new_tasks.append(
-                Task(
-                    name=f"worker-node-task-{str(self._worker_task_counter).zfill(5)}",
-                    taskType=TASK_TYPE,
-                    taskData=ray_start_script,
-                    arguments=["taskdata.txt"],
-                    environment={RAY_HEAD_IP_ENV_VAR: self.head_node_private_ip},
-                    outputs=(None if capture_taskoutput is False else self._taskoutput),
-                )
+        new_tasks = [
+            Task(
+                name=f"worker-node-task-{str(task_number).zfill(5)}",
+                taskType=TASK_TYPE,
+                taskData=ray_start_script,
+                arguments=["taskdata.txt"],
+                environment={RAY_HEAD_IP_ENV_VAR: self.head_node_private_ip},
+                outputs=(None if capture_taskoutput is False else self._taskoutput),
             )
-            self._worker_task_counter += 1
+            for task_number in range(
+                self._worker_task_counter, self._worker_task_counter + count
+            )
+        ]
+        self._worker_task_counter += count
 
         new_tasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group.id,
