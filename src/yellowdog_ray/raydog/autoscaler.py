@@ -569,6 +569,7 @@ class TagStore:
         self._cluster_name = cluster_name
         self._redis: redis.Redis | None = None
         self._tags: dict[str, dict] = {}
+        self._tunnel: SSHTunnelForwarder | None = None
 
     def find_matches(
         self, longlist: list[str] | None, tag_name: str, tag_value: str
@@ -609,6 +610,10 @@ class TagStore:
         Connect to the Redis tag server on the head node.
         """
 
+        if self._tunnel:
+            self._tunnel.stop()
+            self._tunnel = None
+
         # setup an SSH tunnel, if required
         if remote_server is not None:
             LOG.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
@@ -621,6 +626,7 @@ class TagStore:
             tunnel.start()
             LOG.debug(f"SSH tunnel local port {tunnel.local_bind_port}")
             port = tunnel.local_bind_port
+            self._tunnel = tunnel
 
         # Connect to Redis
         self._redis = redis.Redis(host="localhost", port=port, decode_responses=True)
@@ -629,6 +635,18 @@ class TagStore:
         if self._tags:
             self._writeback_all()
         self.refresh()
+
+    def close(self) -> None:
+        """
+        Close SSH tunnel and Redis connections.
+        """
+        if self._tunnel:
+            self._tunnel.stop()
+            self._tunnel = None
+
+        if self._redis:
+            self._redis.close()
+            self._redis = None
 
     def refresh(self) -> None:
         """
@@ -949,6 +967,9 @@ class AutoRayDog:
                     worker_pool_id
                 )
             self._worker_pools = {}
+            
+            # Close connections
+            self._tag_store.close()
 
     def _get_node_id_for_task(self, task: Task) -> str:
         """
