@@ -375,6 +375,9 @@ class RayDogNodeProvider(NodeProvider):
         node_type = tags[TAG_RAY_NODE_KIND]
         flavour = tags[TAG_RAY_USER_NODE_TYPE].lower()
 
+        if PROP_CRT not in node_config:
+            raise Exception(f"Missing '{PROP_CRT}' in node_config for '{node_type}'")
+
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
         if not self._auto_raydog.has_worker_pool(flavour):
