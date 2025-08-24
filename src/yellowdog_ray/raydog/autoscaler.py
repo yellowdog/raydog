@@ -95,6 +95,7 @@ SCRIPT_FILE_PREFIX = "file:"
 HEAD_NODE_NAME = "head-node"
 RAY_HEAD_IP_ENV_VAR = "RAY_HEAD_IP"
 PROP_PROVIDER = "provider"
+PROP_AVAILABLE_NODE_TYPES = "available_node_types"
 
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
@@ -121,6 +122,9 @@ class RayDogNodeProvider(NodeProvider):
         prior to the constructor being called.
         """
         LOG.debug(f"bootstrap_config {cluster_config}")
+
+        if not cluster_config.get(PROP_AVAILABLE_NODE_TYPES):
+            LOG.warning("No 'available_node_types' defined in cluster config")
 
         config_file = RayDogNodeProvider._get_autoscaling_config_option()
         basepath = os.path.dirname(config_file) if config_file else "."
@@ -970,7 +974,7 @@ class AutoRayDog:
                     worker_pool_id
                 )
             self._worker_pools = {}
-            
+
             # Close connections
             self._tag_store.close()
 
