@@ -1115,7 +1115,10 @@ class AutoRayDog:
         Create the worker node tasks for a given worker pool.
         """
 
-        LOG.debug(f"create_worker_node tasks {flavour} {count}")
+        LOG.debug(f"create_worker_node_tasks: add {count} tasks for '{flavour}'")
+
+        if not self.has_worker_pool(flavour):
+            raise Exception(f"No worker pool found for flavour '{flavour}'")
 
         # Get the latest state of the work requirement from YellowDog
         work_requirement: WorkRequirement = (
