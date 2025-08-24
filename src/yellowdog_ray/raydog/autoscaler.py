@@ -61,7 +61,6 @@ YD_API_KEY_SECRET_VAR = "YD_API_KEY_SECRET"
 PROP_CLUSTER_NAMESPACE = "cluster_namespace"
 PROP_HEAD_START_RAY_SCRIPT = "head_start_ray_script"
 PROP_WORKER_START_RAY_SCRIPT = "worker_start_ray_script"
-PROP_AUTH = "auth"
 #   Optional
 PROP_CLUSTER_TAG = "cluster_tag"
 PROP_CLUSTER_LIFETIME = "cluster_lifetime"
@@ -97,6 +96,7 @@ HEAD_NODE_NAME = "head-node"
 RAY_HEAD_IP_ENV_VAR = "RAY_HEAD_IP"
 PROP_PROVIDER = "provider"
 PROP_AVAILABLE_NODE_TYPES = "available_node_types"
+PROP_AUTH = "auth"
 
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
@@ -123,6 +123,19 @@ class RayDogNodeProvider(NodeProvider):
         prior to the constructor being called.
         """
         LOG.debug(f"bootstrap_config {cluster_config}")
+
+        # Check for required provider properties
+        provider = cluster_config.get(PROP_PROVIDER, {})
+        if PROP_CLUSTER_NAMESPACE not in provider:
+            raise ValueError(f"Missing '{PROP_CLUSTER_NAMESPACE}' in provider config")
+        if PROP_HEAD_START_RAY_SCRIPT not in provider:
+            raise ValueError(
+                f"Missing '{PROP_HEAD_START_RAY_SCRIPT}' in provider config"
+            )
+        if PROP_WORKER_START_RAY_SCRIPT not in provider:
+            raise ValueError(
+                f"Missing '{PROP_WORKER_START_RAY_SCRIPT}' in provider config"
+            )
 
         if not cluster_config.get(PROP_AVAILABLE_NODE_TYPES):
             LOG.warning("No 'available_node_types' defined in cluster config")
@@ -390,7 +403,7 @@ class RayDogNodeProvider(NodeProvider):
         flavour = tags[TAG_RAY_USER_NODE_TYPE].lower()
 
         if PROP_CRT not in node_config:
-            raise Exception(f"Missing '{PROP_CRT}' in node_config for '{node_type}'")
+            raise ValueError(f"Missing '{PROP_CRT}' in node_config for '{node_type}'")
 
         # Check that YellowDog knows how to create instances of this type
         # ToDo: handle the on-prem case
