@@ -237,15 +237,19 @@ class RayDogNodeProvider(NodeProvider):
         """
         if files is None:
             files = set()
+
         if basepath is None:
             config_file = RayDogNodeProvider._get_autoscaling_config_option()
             basepath = os.path.dirname(config_file) if config_file else "."
+
         if isinstance(config, dict):
             for value in config.values():
                 RayDogNodeProvider._find_file_references(value, files)
+
         elif isinstance(config, list):
             for item in config:
                 RayDogNodeProvider._find_file_references(item, files)
+
         elif isinstance(config, str) and config.startswith(SCRIPT_FILE_PREFIX):
             file_path = config[
                 len(SCRIPT_FILE_PREFIX) :
@@ -256,7 +260,10 @@ class RayDogNodeProvider(NodeProvider):
                     if os.path.isabs(file_path)
                     else os.path.join(basepath, file_path)
                 )
+                if not os.path.exists(resolved_path):
+                    raise FileNotFoundError(f"File not found: '{resolved_path}'")
                 files.add(resolved_path)
+
         return files
 
     @staticmethod
