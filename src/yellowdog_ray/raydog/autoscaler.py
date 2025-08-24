@@ -416,16 +416,17 @@ class RayDogNodeProvider(NodeProvider):
                 self.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
             )
 
-            # Upload any extra scripts that the head node might need to
-            # understand the autoscaler config file
+            # Upload any extra files the head node might need to
+            # implement the autoscaler config file
             if self._files_to_upload:
                 cmd_runner: CommandRunnerInterface = (
                     self._get_head_node_command_runner()
                 )
                 for filename in self._files_to_upload:
-                    LOG.debug(f"Uploading {filename}")
-                    cmd_runner.run_rsync_up(filename, f"~/{filename}")
-        else:
+                    LOG.debug(f"Uploading '{filename}'")
+                    cmd_runner.run_rsync_up(filename, f"~/{os.path.basename(filename)}")
+
+        else:  # Worker node
             # Create worker node tasks
             new_nodes = self._auto_raydog.create_worker_node_tasks(
                 flavour=flavour,
