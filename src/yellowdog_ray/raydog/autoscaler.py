@@ -87,6 +87,7 @@ VAL_TRUE = "true"
 # Other constants
 TASK_TYPE = "bash"
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
+BUILD_TIMEOUT_DEFAULT = timedelta(minutes=5)
 TAG_SERVER_PORT_DEFAULT = 16667
 LOCALHOST = "127.0.0.1"
 PROP_SSH_USER = "ssh_user"
@@ -101,6 +102,9 @@ PROP_AUTH = "auth"
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
+
+# Set a default for cluster lifetime
+IDLE_POOL_YD_SHUTDOWN_DEFAULT = timedelta(minutes=60)
 
 # The 'max_workers' property in the autoscaler YAML will determine
 # the actual maximum size of the worker pool; this prevents YellowDog
@@ -751,12 +755,22 @@ class AutoRayDog:
             random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8)
         )
 
-        # Establish timeouts
+        # Establish build and cluster lifetime timeouts
         self._cluster_lifetime: timedelta | None = self._parse_duration(
             provider_config.get(PROP_CLUSTER_LIFETIME)
         )
+        self._cluster_lifetime = (
+            IDLE_POOL_YD_SHUTDOWN_DEFAULT
+            if self._cluster_lifetime is None
+            else self._cluster_lifetime
+        )
         self._build_timeout: timedelta | None = self._parse_duration(
             provider_config.get(PROP_BUILD_TIMEOUT)
+        )
+        self._build_timeout = (
+            BUILD_TIMEOUT_DEFAULT
+            if self._build_timeout is None
+            else self._build_timeout
         )
 
         # Get the PlatformClient object
