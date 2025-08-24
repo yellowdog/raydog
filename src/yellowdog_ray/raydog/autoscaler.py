@@ -248,11 +248,13 @@ class RayDogNodeProvider(NodeProvider):
 
         if isinstance(config, dict):
             for value in config.values():
-                RayDogNodeProvider._find_file_references(value, files)
+                RayDogNodeProvider._find_file_references(
+                    value, files, basepath=basepath
+                )
 
         elif isinstance(config, list):
             for item in config:
-                RayDogNodeProvider._find_file_references(item, files)
+                RayDogNodeProvider._find_file_references(item, files, basepath=basepath)
 
         elif isinstance(config, str) and config.startswith(SCRIPT_FILE_PREFIX):
             file_path = config[
