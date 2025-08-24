@@ -122,9 +122,14 @@ class RayDogNodeProvider(NodeProvider):
         """
         LOG.debug(f"bootstrap_config {cluster_config}")
 
+        config_file = RayDogNodeProvider._get_autoscaling_config_option()
+        basepath = os.path.dirname(config_file) if config_file else "."
+
         # Find all 'file:' references in the entire cluster config;
         # add these to the 'files_to_upload' provider property
-        all_files: set = RayDogNodeProvider._find_file_references(cluster_config)
+        all_files: set = RayDogNodeProvider._find_file_references(
+            cluster_config, basepath=basepath
+        )
         if len(all_files) > 0:
             existing_files_to_upload = set(
                 cluster_config[PROP_PROVIDER].get(PROP_FILES_TO_UPLOAD, [])
@@ -223,13 +228,18 @@ class RayDogNodeProvider(NodeProvider):
         )
 
     @staticmethod
-    def _find_file_references(config: Any, files: set[str] = None) -> set[str]:
+    def _find_file_references(
+        config: Any, files: set[str] = None, basepath: str = None
+    ) -> set[str]:
         """
         Recursively find all unique file paths referenced with 'file:'
         in the config.
         """
         if files is None:
             files = set()
+        if basepath is None:
+            config_file = RayDogNodeProvider._get_autoscaling_config_option()
+            basepath = os.path.dirname(config_file) if config_file else "."
         if isinstance(config, dict):
             for value in config.values():
                 RayDogNodeProvider._find_file_references(value, files)
@@ -241,7 +251,12 @@ class RayDogNodeProvider(NodeProvider):
                 len(SCRIPT_FILE_PREFIX) :
             ].strip()  # Extract path after 'file:'
             if file_path:
-                files.add(file_path)
+                resolved_path = (
+                    file_path
+                    if os.path.isabs(file_path)
+                    else os.path.join(basepath, file_path)
+                )
+                files.add(resolved_path)
         return files
 
     @staticmethod
