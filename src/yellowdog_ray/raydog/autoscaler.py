@@ -67,6 +67,7 @@ PROP_CLUSTER_TAG = "cluster_tag"
 PROP_CLUSTER_LIFETIME = "cluster_lifetime"
 PROP_BUILD_TIMEOUT = "head_node_build_timeout"
 PROP_FILES_TO_UPLOAD = "files_to_upload"
+PROP_TAG_SERVER_PORT = "head_node_tag_server_port"
 
 # Node configuration property names
 #   Required
@@ -87,7 +88,7 @@ VAL_TRUE = "true"
 # Other constants
 TASK_TYPE = "bash"
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
-TAG_SERVER_PORT = 16667
+TAG_SERVER_PORT_DEFAULT = 16667
 LOCALHOST = "127.0.0.1"
 PROP_SSH_USER = "ssh_user"
 PROP_SSH_PRIVATE_KEY = "ssh_private_key"
@@ -129,6 +130,12 @@ class RayDogNodeProvider(NodeProvider):
         config_file = RayDogNodeProvider._get_autoscaling_config_option()
         basepath = os.path.dirname(config_file) if config_file else "."
 
+        # Copy the global auth info to the provider, to make it available
+        # to the constructor
+        cluster_config[PROP_PROVIDER][PROP_AUTH] = cluster_config.get(
+            PROP_AUTH, []
+        ).copy()
+
         # Find all 'file:' references in the entire cluster config;
         # add these to the 'files_to_upload' provider property
         all_files: set = RayDogNodeProvider._find_file_references(
@@ -145,11 +152,6 @@ class RayDogNodeProvider(NodeProvider):
                 f"Found additional files to upload: {all_files} ... "
                 "adding them to the cluster config"
             )
-
-        # Copy the global auth info to the provider, so the constructor sees it
-        cluster_config[PROP_PROVIDER][PROP_AUTH] = cluster_config.get(
-            PROP_AUTH, []
-        ).copy()
 
         return cluster_config
 
@@ -170,10 +172,14 @@ class RayDogNodeProvider(NodeProvider):
 
         super().__init__(provider_config, cluster_name)
 
-        # If running client-side the bootstrap function puts the auth info into provider_config
+        # If running client-side the bootstrap function puts the auth info
+        # into provider_config
         self._auth_config = self.provider_config.get(PROP_AUTH)
 
         self._tag_store = TagStore(cluster_name)
+        self._tag_store_server_port = provider_config.get(
+            PROP_TAG_SERVER_PORT, TAG_SERVER_PORT_DEFAULT
+        )
         self._cmd_runner = None
         self._scripts = {}
 
@@ -194,7 +200,9 @@ class RayDogNodeProvider(NodeProvider):
 
         # Decide how to boot up, depending on the situation
         if self._on_head_node:
-            self._tag_store.connect(None, TAG_SERVER_PORT, self._auth_config)
+            self._tag_store.connect(
+                None, self._tag_store_server_port, self._auth_config
+            )
             self._auto_raydog = AutoRayDog(
                 provider_config, cluster_name, self._tag_store
             )
@@ -214,7 +222,7 @@ class RayDogNodeProvider(NodeProvider):
                 # Get the tags from an existing head node
                 self._tag_store.connect(
                     self._auto_raydog.head_node_public_ip,
-                    TAG_SERVER_PORT,
+                    self._tag_store_server_port,
                     self._auth_config,
                 )
             else:
@@ -422,7 +430,7 @@ class RayDogNodeProvider(NodeProvider):
 
             # Sync tag values with the head node
             self._tag_store.connect(
-                self.head_node_public_ip, TAG_SERVER_PORT, self._auth_config
+                self.head_node_public_ip, self._tag_store_server_port, self._auth_config
             )
 
             # Upload any extra files the head node might need to
