@@ -114,6 +114,36 @@ class RayDogNodeProvider(NodeProvider):
     The RayDog implementation of a Ray autoscaling provider.
     """
 
+    @staticmethod
+    def bootstrap_config(cluster_config: dict[str, Any]) -> dict[str, Any]:
+        """
+        Bootstraps the cluster config by adding/updating relevant properties,
+        prior to the constructor being called.
+        """
+        LOG.debug(f"bootstrap_config {cluster_config}")
+
+        # Find all 'file:' references in the entire cluster config;
+        # add these to the 'files_to_upload' provider property
+        all_files: set = RayDogNodeProvider._find_file_references(cluster_config)
+        if len(all_files) > 0:
+            existing_files_to_upload = set(
+                cluster_config[PROP_PROVIDER].get(PROP_FILES_TO_UPLOAD, [])
+            )
+            cluster_config[PROP_PROVIDER][PROP_FILES_TO_UPLOAD] = list(
+                existing_files_to_upload.union(all_files)
+            )
+            LOG.debug(
+                f"Found additional files to upload: {all_files} ... "
+                "adding them to the cluster config"
+            )
+
+        # Copy the global auth info to the provider, so the constructor sees it
+        cluster_config[PROP_PROVIDER][PROP_AUTH] = cluster_config.get(
+            PROP_AUTH, []
+        ).copy()
+
+        return cluster_config
+
     def __init__(self, provider_config: dict[str, Any], cluster_name: str) -> None:
         """
         Called by Ray to provide nodes for the cluster.
@@ -137,6 +167,7 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store = TagStore(cluster_name)
         self._cmd_runner = None
         self._scripts = {}
+
         self._files_to_upload = set(provider_config.get(PROP_FILES_TO_UPLOAD, []))
 
         self.head_node_public_ip = None
@@ -192,11 +223,33 @@ class RayDogNodeProvider(NodeProvider):
         )
 
     @staticmethod
+    def _find_file_references(config: Any, files: set[str] = None) -> set[str]:
+        """
+        Recursively find all unique file paths referenced with 'file:'
+        in the config.
+        """
+        if files is None:
+            files = set()
+        if isinstance(config, dict):
+            for value in config.values():
+                RayDogNodeProvider._find_file_references(value, files)
+        elif isinstance(config, list):
+            for item in config:
+                RayDogNodeProvider._find_file_references(item, files)
+        elif isinstance(config, str) and config.startswith(SCRIPT_FILE_PREFIX):
+            file_path = config[
+                len(SCRIPT_FILE_PREFIX) :
+            ].strip()  # Extract path after 'file:'
+            if file_path:
+                files.add(file_path)
+        return files
+
+    @staticmethod
     def _get_autoscaling_config_option() -> str | None:
         """
         Get the path for the autoscaling config file, if set.
         """
-        # ToDo: this is unsafe for the case with no '='
+        # ToDo: is this unsafe for the case with no '='?
         for arg in sys.argv:
             if arg.startswith("--autoscaling-config="):
                 return arg.split("=")[1]
@@ -432,17 +485,6 @@ class RayDogNodeProvider(NodeProvider):
         LOG.debug(f"prepare_for_head_node {cluster_config}")
         return cluster_config
 
-    @staticmethod
-    def bootstrap_config(cluster_config: dict[str, Any]) -> dict[str, Any]:
-        """
-        Bootstraps the cluster config by adding env defaults if needed.
-        """
-        LOG.debug(f"bootstrap_config {cluster_config}")
-
-        # Copy the global auth info to the provider, so the constructor sees it
-        cluster_config[PROP_PROVIDER][PROP_AUTH] = cluster_config[PROP_AUTH].copy()
-        return cluster_config
-
     def _get_head_node_command_runner(self) -> CommandRunnerInterface:
         """
         Create a CommandRunner object for the head node.
@@ -489,8 +531,6 @@ class RayDogNodeProvider(NodeProvider):
         full_script_path = os.path.join(self._basepath, script_path)
         if not os.path.exists(full_script_path):
             raise Exception(f"Script file '{full_script_path}' does not exist")
-
-        self._files_to_upload.add(script_path)
 
         with open(full_script_path) as f:
             return f.read()
