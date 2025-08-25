@@ -403,77 +403,92 @@ class RayDogNodeProvider(NodeProvider):
         """
         LOG.debug(f"create_node {node_config} {tags} {count}")
 
-        node_type = tags[TAG_RAY_NODE_KIND]
-        flavour = tags[TAG_RAY_USER_NODE_TYPE].lower()
+        # Wrap in try/except loop to catch keyboard abort and perform cleanup
+        try:
+            node_type = tags[TAG_RAY_NODE_KIND]
+            flavour = tags[TAG_RAY_USER_NODE_TYPE].lower()
 
-        if PROP_CRT not in node_config:
-            raise ValueError(f"Missing '{PROP_CRT}' in node_config for '{node_type}'")
-
-        # Check that YellowDog knows how to create instances of this type
-        # ToDo: handle the on-prem case
-        if not self._auto_raydog.has_worker_pool(flavour):
-            userdata_script = (
-                self._load_script(node_config.get(PROP_USERDATA))
-                + "\n"
-                + self._load_script(node_config.get(PROP_EXTRA_USERDATA))
-            )
-
-            # Create the YellowDog worker pool
-            self._auto_raydog.create_worker_pool(
-                flavour=flavour,
-                node_type=node_type,
-                node_config=node_config,
-                count=count,
-                userdata=userdata_script,
-                metrics_enabled=node_config.get(PROP_METRICS_ENABLED, False),
-            )
-
-        # Start the required tasks
-        if node_type == NODE_KIND_HEAD:
-            # Create a head node
-            head_id = self._auto_raydog.create_head_node_task(
-                flavour=flavour,
-                ray_start_script=self._get_script_from_provider_config(
-                    PROP_HEAD_START_RAY_SCRIPT
-                ),
-                capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
-            )
-
-            # Initialise tags & remember the IP addresses
-            self._tag_store.update_tags(head_id, tags)
-            self.head_node_public_ip, self.head_node_private_ip = (
-                self._get_ip_addresses(head_id)
-            )
-
-            # Sync tag values with the head node
-            self._tag_store.connect(
-                self.head_node_public_ip, self._tag_store_server_port, self._auth_config
-            )
-
-            # Upload any extra files the head node might need to
-            # implement the autoscaler config file
-            if self._files_to_upload:
-                cmd_runner: CommandRunnerInterface = (
-                    self._get_head_node_command_runner()
+            if PROP_CRT not in node_config:
+                raise ValueError(
+                    f"Missing '{PROP_CRT}' in node_config for '{node_type}'"
                 )
-                for filename in self._files_to_upload:
-                    LOG.debug(f"Uploading '{filename}'")
-                    cmd_runner.run_rsync_up(filename, f"~/{os.path.basename(filename)}")
 
-        else:  # Worker node
-            # Create worker node tasks
-            new_nodes = self._auto_raydog.create_worker_node_tasks(
-                flavour=flavour,
-                ray_start_script=self._get_script_from_provider_config(
-                    PROP_WORKER_START_RAY_SCRIPT
-                ),
-                count=count,
-                capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
+            # Check that YellowDog knows how to create instances of this type
+            # ToDo: handle the on-prem case
+            if not self._auto_raydog.has_worker_pool(flavour):
+                userdata_script = (
+                    self._load_script(node_config.get(PROP_USERDATA))
+                    + "\n"
+                    + self._load_script(node_config.get(PROP_EXTRA_USERDATA))
+                )
+
+                # Create the YellowDog worker pool
+                self._auto_raydog.create_worker_pool(
+                    flavour=flavour,
+                    node_type=node_type,
+                    node_config=node_config,
+                    count=count,
+                    userdata=userdata_script,
+                    metrics_enabled=node_config.get(PROP_METRICS_ENABLED, False),
+                )
+
+            # Start the required tasks
+            if node_type == NODE_KIND_HEAD:
+                # Create a head node
+                head_id = self._auto_raydog.create_head_node_task(
+                    flavour=flavour,
+                    ray_start_script=self._get_script_from_provider_config(
+                        PROP_HEAD_START_RAY_SCRIPT
+                    ),
+                    capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
+                )
+
+                # Initialise tags & remember the IP addresses
+                self._tag_store.update_tags(head_id, tags)
+                self.head_node_public_ip, self.head_node_private_ip = (
+                    self._get_ip_addresses(head_id)
+                )
+
+                # Sync tag values with the head node
+                self._tag_store.connect(
+                    self.head_node_public_ip,
+                    self._tag_store_server_port,
+                    self._auth_config,
+                )
+
+                # Upload any extra files the head node might need to
+                # implement the autoscaler config file
+                if self._files_to_upload:
+                    cmd_runner: CommandRunnerInterface = (
+                        self._get_head_node_command_runner()
+                    )
+                    for filename in self._files_to_upload:
+                        LOG.debug(f"Uploading '{filename}'")
+                        cmd_runner.run_rsync_up(
+                            filename, f"~/{os.path.basename(filename)}"
+                        )
+
+            else:  # Worker node
+                # Create worker node tasks
+                new_nodes = self._auto_raydog.create_worker_node_tasks(
+                    flavour=flavour,
+                    ray_start_script=self._get_script_from_provider_config(
+                        PROP_WORKER_START_RAY_SCRIPT
+                    ),
+                    count=count,
+                    capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
+                )
+
+                # Initialise tags
+                for node_id in new_nodes:
+                    self._tag_store.update_tags(node_id, tags)
+
+        except KeyboardInterrupt:
+            LOG.warning(
+                "Caught KeyboardInterrupt in create_node, cleaning up resources"
             )
-
-            # Initialise tags
-            for node_id in new_nodes:
-                self._tag_store.update_tags(node_id, tags)
+            self._auto_raydog.shut_down()
+            raise
 
     def create_node_with_resources_and_labels(
         self,
@@ -909,7 +924,7 @@ class AutoRayDog:
         if work_req_id is None:
             return False
 
-        # Found - fill in the details
+        # Found: fill in the details
         self._work_requirement_id = work_req_id
         work_requirement = self._get_work_requirement()
 
@@ -1007,6 +1022,9 @@ class AutoRayDog:
             # Cancel the work requirement & abort all tasks
             if self._work_requirement_id is not None:
                 try:
+                    LOG.info(
+                        f"Cancelling work requirement '{self._work_requirement_id}'"
+                    )
                     self.yd_client.work_client.cancel_work_requirement_by_id(
                         self._work_requirement_id, abort=True
                     )
@@ -1017,6 +1035,7 @@ class AutoRayDog:
 
             # Shut down all worker pools
             for worker_pool_id in self._worker_pools.values():
+                LOG.info(f"Shutting down worker pool '{worker_pool_id}'")
                 self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
                     worker_pool_id
                 )
@@ -1194,7 +1213,7 @@ class AutoRayDog:
             index = len(work_requirement.taskGroups)
             work_requirement.taskGroups.append(
                 TaskGroup(
-                    name=f"worker-nodes-{flavour}-{str(self._worker_task_group_counter).zfill(3)}",
+                    name=f"worker-nodes-{flavour}-{str(self._worker_task_group_counter).zfill(4)}",
                     tag=flavour,
                     finishIfAnyTaskFailed=False,
                     finishIfAllTasksFinished=True,
