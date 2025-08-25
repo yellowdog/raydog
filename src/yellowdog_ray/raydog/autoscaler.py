@@ -48,6 +48,7 @@ from yellowdog_client.model import (
     WorkRequirementSearch,
     WorkRequirementStatus,
 )
+from yellowdog_client.model.exceptions import InvalidRequestException
 from yellowdog_client.platform_client import PlatformClient
 
 # API URL and Application Key/Secret
@@ -1166,11 +1167,20 @@ class AutoRayDog:
             outputs=(None if capture_taskoutput is False else self._taskoutput),
         )
 
-        self.head_node_task_id = (
-            self.yd_client.work_client.add_tasks_to_task_group_by_id(
-                work_requirement.taskGroups[0].id, [head_node_task]
-            )[0].id
-        )
+        try:
+            self.head_node_task_id = (
+                self.yd_client.work_client.add_tasks_to_task_group_by_id(
+                    work_requirement.taskGroups[0].id, [head_node_task]
+                )[0].id
+            )
+        except (InvalidRequestException, IndexError):
+            # This probably means there's a lingering work requirement
+            # from a previous failed invocation of 'run'; cancel it
+            LOG.warning(f"Cancelling work requirement '{work_requirement.id}'")
+            self.yd_client.work_client.cancel_work_requirement_by_id(
+                work_requirement.id
+            )
+            raise
 
         # Wait for the head node to start
         if self._build_timeout:
@@ -1192,6 +1202,7 @@ class AutoRayDog:
                 TaskStatus.ABORTED,
                 TaskStatus.DISCARDED,
             ]:
+                self.shut_down()
                 raise Exception(
                     f"Unexpected head node task status: '{head_task.status}'"
                 )
