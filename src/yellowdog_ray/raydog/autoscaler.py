@@ -307,10 +307,13 @@ class RayDogNodeProvider(NodeProvider):
         """
         Get the path for the autoscaling config file, if set.
         """
-        # ToDo: is this unsafe for the case with no '='?
         for arg in sys.argv:
             if arg.startswith("--autoscaling-config="):
-                return arg.split("=")[1]
+                try:
+                    return arg.split("=", 1)[1]
+                except IndexError:
+                    break
+
         return None
 
     def non_terminated_nodes(self, tag_filters: dict[str, str]) -> list[str]:
