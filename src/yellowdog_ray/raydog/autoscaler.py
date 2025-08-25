@@ -464,9 +464,12 @@ class RayDogNodeProvider(NodeProvider):
                     )
                     for filename in self._files_to_upload:
                         LOG.debug(f"Uploading '{filename}'")
-                        cmd_runner.run_rsync_up(
-                            filename, f"~/{os.path.basename(filename)}"
-                        )
+                        remote_dir = os.path.dirname(
+                            filename
+                        )  # Relative dir from basepath
+                        if remote_dir:
+                            cmd_runner.run(f"mkdir -p ~/{remote_dir}")
+                        cmd_runner.run_rsync_up(filename, f"~/{filename}")
 
             else:  # Worker node
                 # Create worker node tasks
