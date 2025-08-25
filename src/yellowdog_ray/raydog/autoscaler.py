@@ -1002,13 +1002,28 @@ class AutoRayDog:
         """
         Extract the public and private IP addresses for the node.
         """
+        start_time = datetime.now()  # Timeout to prevent infinite loop
+
         while True:
             task: Task = self.yd_client.work_client.get_task_by_id(node_id)
-            if task.status in [TaskStatus.PENDING, TaskStatus.READY]:
-                LOG.debug(f"Waiting for {node_id} to start running")
-                sleep(5)
-            else:
+
+            if task.status == TaskStatus.EXECUTING:
                 break
+
+            elif task.status in [
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+                TaskStatus.ABORTED,
+                TaskStatus.DISCARDED,
+            ]:
+                raise RuntimeError(f"Task {node_id} failed with status '{task.status}'")
+
+            elif datetime.now() - start_time > self._build_timeout:
+                raise TimeoutError(f"Timeout waiting for task '{node_id}' to start")
+
+            else:
+                LOG.debug(f"Waiting for {node_id} to start running")
+                sleep(HEAD_NODE_TASK_POLLING_INTERVAL.seconds)
 
         yd_node_id: str = self._get_node_id_for_task(task)
         yd_node: Node = self.yd_client.worker_pool_client.get_node_by_id(yd_node_id)
