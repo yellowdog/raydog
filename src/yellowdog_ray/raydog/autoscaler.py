@@ -162,6 +162,13 @@ class RayDogNodeProvider(NodeProvider):
             PROP_AUTH, []
         ).copy()
 
+        # Check that auth values are present
+        auth = cluster_config[PROP_PROVIDER][PROP_AUTH]
+        if PROP_SSH_USER not in auth:
+            raise ValueError(f"Missing '{PROP_SSH_USER}' in auth config")
+        if PROP_SSH_PRIVATE_KEY not in auth:
+            raise ValueError(f"Missing '{PROP_SSH_PRIVATE_KEY}' in auth config")
+
         # Find all 'file:' references in the entire cluster config;
         # add these to the 'files_to_upload' provider property
         all_files: set = RayDogNodeProvider._find_file_references(
@@ -937,13 +944,23 @@ class AutoRayDog:
         self._cluster_tag: str = work_requirement.tag
 
         # Task group for the head node
-        head_task_group: TaskGroup = work_requirement.taskGroups[0]
-        self._cluster_lifetime = head_task_group.runSpecification.taskTimeout
+        try:
+            head_task_group: TaskGroup = work_requirement.taskGroups[0]
+            self._cluster_lifetime = head_task_group.runSpecification.taskTimeout
 
-        head_task: Task = self._get_tasks_in_task_group(head_task_group.id).list_all()[
-            0
-        ]
-        self.head_node_task_id = head_task.id
+            head_task: Task = self._get_tasks_in_task_group(
+                head_task_group.id
+            ).list_all()[0]
+            self.head_node_task_id = head_task.id
+
+        except IndexError:
+            LOG.warning(
+                f"Can't find head task for cluster '{self._cluster_name}', "
+                "possibly due to an earlier, quickly aborted 'up' invocation"
+            )
+            self.yd_client.work_client.cancel_work_requirement_by_id(work_req_id)
+            LOG.warning(f"Cancelled work requirement '{work_req_id}'")
+            return False
 
         # Find which worker pools already exist
         worker_pools: SearchClient[WorkerPoolSummary] = (
