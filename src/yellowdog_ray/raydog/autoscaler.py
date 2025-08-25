@@ -113,6 +113,9 @@ MAX_NODES_IN_WORKER_POOL = 100000
 
 
 LOG = logging.getLogger(__name__)
+# ToDo: Remove
+LOG.setLevel(logging.DEBUG)
+cli_logger.configure(verbosity=2)
 
 
 class RayDogNodeProvider(NodeProvider):
@@ -126,9 +129,10 @@ class RayDogNodeProvider(NodeProvider):
         Bootstraps the cluster config by adding/updating relevant properties,
         prior to the constructor being called.
         """
-        LOG.debug(f"bootstrap_config {cluster_config}")
 
-        # Check for required provider properties
+        LOG.debug(f"bootstrapping cluster config: {cluster_config}")
+
+        # Check for required provider properties, types
         provider = cluster_config.get(PROP_PROVIDER, {})
         if PROP_CLUSTER_NAMESPACE not in provider:
             raise ValueError(f"Missing '{PROP_CLUSTER_NAMESPACE}' in provider config")
@@ -143,6 +147,11 @@ class RayDogNodeProvider(NodeProvider):
 
         if not cluster_config.get(PROP_AVAILABLE_NODE_TYPES):
             LOG.warning("No 'available_node_types' defined in cluster config")
+
+        if not isinstance(provider.get(PROP_FILES_TO_UPLOAD, []), list):
+            raise ValueError(
+                f"Provider property '{PROP_FILES_TO_UPLOAD}' must be a list"
+            )
 
         config_file = RayDogNodeProvider._get_autoscaling_config_option()
         basepath = os.path.dirname(config_file) if config_file else "."
@@ -165,10 +174,7 @@ class RayDogNodeProvider(NodeProvider):
             cluster_config[PROP_PROVIDER][PROP_FILES_TO_UPLOAD] = list(
                 existing_files_to_upload.union(all_files)
             )
-            LOG.debug(
-                f"Found additional files to upload: {all_files} ... "
-                "adding them to the cluster config"
-            )
+            LOG.debug(f"Adding discovered files to upload: {all_files}")
 
         return cluster_config
 
@@ -176,10 +182,6 @@ class RayDogNodeProvider(NodeProvider):
         """
         Called by Ray to provide nodes for the cluster.
         """
-
-        # ToDo: Remove
-        LOG.setLevel(logging.DEBUG)
-        cli_logger.configure(verbosity=2)
 
         LOG.debug(f"RayDogNodeProvider {cluster_name} {provider_config}")
 
@@ -286,14 +288,9 @@ class RayDogNodeProvider(NodeProvider):
                 len(SCRIPT_FILE_PREFIX) :
             ].strip()  # Extract path after 'file:'
             if file_path:
-                resolved_path = (
-                    file_path
-                    if os.path.isabs(file_path)
-                    else os.path.join(basepath, file_path)
-                )
-                if not os.path.exists(resolved_path):
-                    raise FileNotFoundError(f"File not found: '{resolved_path}'")
-                files.add(resolved_path)
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"File not found: '{file_path}'")
+                files.add(file_path)
 
         return files
 
