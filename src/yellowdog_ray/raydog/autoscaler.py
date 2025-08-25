@@ -5,7 +5,6 @@ RayDog Autoscaler: Ray cluster creation and autoscaling using YellowDog.
 import logging
 import os
 import random
-import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -64,8 +63,8 @@ PROP_HEAD_START_RAY_SCRIPT = "head_start_ray_script"
 PROP_WORKER_START_RAY_SCRIPT = "worker_start_ray_script"
 #   Optional
 PROP_CLUSTER_TAG = "cluster_tag"
-PROP_CLUSTER_LIFETIME = "cluster_lifetime"
-PROP_BUILD_TIMEOUT = "head_node_build_timeout"
+PROP_CLUSTER_LIFETIME_HOURS = "cluster_lifetime_hours"
+PROP_BUILD_TIMEOUT_MINUTES = "head_node_build_timeout_minutes"
 PROP_FILES_TO_UPLOAD = "files_to_upload"
 PROP_TAG_SERVER_PORT = "head_node_tag_server_port"
 
@@ -88,7 +87,8 @@ VAL_TRUE = "true"
 # Other constants
 TASK_TYPE = "bash"
 HEAD_NODE_TASK_POLLING_INTERVAL = timedelta(seconds=10.0)
-BUILD_TIMEOUT_DEFAULT = timedelta(minutes=5)
+BUILD_TIMEOUT_DEFAULT_MINUTES = 10.0
+CLUSTER_LIFETIME_DEFAULT_HOURS = 1.0
 TAG_SERVER_PORT_DEFAULT = 16667
 LOCALHOST = "127.0.0.1"
 PROP_SSH_USER = "ssh_user"
@@ -104,14 +104,10 @@ PROP_AUTH = "auth"
 # already have waited before terminating
 IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
 
-# Set a default for cluster lifetime
-IDLE_POOL_YD_SHUTDOWN_DEFAULT = timedelta(minutes=60)
-
-# The 'max_workers' property in the autoscaler YAML will determine
-# the actual maximum size of the worker pool; this prevents YellowDog
-# imposing a separate limit
+# The 'max_workers' property in the Ray configuration will determine
+# the actual maximum size of a worker node  worker pool;
+# this prevents YellowDog imposing a separate limit
 MAX_NODES_IN_WORKER_POOL = 100000
-
 
 LOG = logging.getLogger(__name__)
 # ToDo: Remove
@@ -782,22 +778,23 @@ class AutoRayDog:
         )
 
         # Establish build and cluster lifetime timeouts
-        self._cluster_lifetime: timedelta | None = self._parse_duration(
-            provider_config.get(PROP_CLUSTER_LIFETIME)
-        )
-        self._cluster_lifetime = (
-            IDLE_POOL_YD_SHUTDOWN_DEFAULT
-            if self._cluster_lifetime is None
-            else self._cluster_lifetime
-        )
-        self._build_timeout: timedelta | None = self._parse_duration(
-            provider_config.get(PROP_BUILD_TIMEOUT)
-        )
-        self._build_timeout = (
-            BUILD_TIMEOUT_DEFAULT
-            if self._build_timeout is None
-            else self._build_timeout
-        )
+        try:
+            self._cluster_lifetime = timedelta(
+                hours=float(
+                    provider_config.get(
+                        PROP_CLUSTER_LIFETIME_HOURS, CLUSTER_LIFETIME_DEFAULT_HOURS
+                    )
+                )
+            )
+            self._build_timeout = timedelta(
+                minutes=float(
+                    provider_config.get(
+                        PROP_BUILD_TIMEOUT_MINUTES, BUILD_TIMEOUT_DEFAULT_MINUTES
+                    )
+                )
+            )
+        except ValueError:
+            raise Exception(f"Timeouts must be integers or floats")
 
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
@@ -1086,42 +1083,6 @@ class AutoRayDog:
         """
         return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
 
-    @staticmethod
-    def _parse_duration(duration: Any) -> timedelta | None:
-        """
-        Regular expression parser to match days, hours, minutes, and seconds
-        (e.g., "1d 2h 30m 15s")'; standalone integers are treated as minutes.
-        """
-        if duration is None:
-            return None
-
-        if not isinstance(duration, str):
-            duration = str(duration)
-
-        # Check if the string is a standalone integer; assume minutes
-        # for consistency with other Ray properties
-        if re.match(r"^\d+$", duration.strip()):
-            return timedelta(minutes=int(duration))
-
-        # Regular expression to match days, hours, minutes, and seconds (e.g., "1d 2h 30m 15s")
-        pattern = r"(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s\s*)?"
-        match = re.match(pattern, duration.strip().lower())
-
-        if not match or not re.search(r"[dhms]", duration, re.IGNORECASE):
-            raise Exception(
-                f"Invalid duration '{duration}'; "
-                "durations should be of form (e.g.) '1d 2h 30m 15s' "
-                "(a standalone integer is interpreted as 'minutes')"
-            )
-
-        # Extract days, hours, minutes, seconds (convert to int, default to 0 if not present)
-        days = int(match.group(1) or 0)
-        hours = int(match.group(2) or 0)
-        minutes = int(match.group(3) or 0)
-        seconds = int(match.group(4) or 0)
-
-        return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
-
     def create_head_node_task(
         self, flavour: str, ray_start_script: str, capture_taskoutput: bool = False
     ) -> str:
@@ -1191,12 +1152,6 @@ class AutoRayDog:
             raise
 
         # Wait for the head node to start
-        if self._build_timeout:
-            endtime = start_time + self._build_timeout
-            timed_out = lambda: (datetime.now() >= endtime)
-        else:
-            timed_out = lambda: False
-
         while True:
             head_task = self.yd_client.work_client.get_task_by_id(
                 self.head_node_task_id
@@ -1215,7 +1170,7 @@ class AutoRayDog:
                     f"Unexpected head node task status: '{head_task.status}'"
                 )
 
-            if timed_out():
+            if datetime.now() > start_time + self._build_timeout:
                 self.shut_down()
                 raise TimeoutError(
                     "Timeout waiting for Ray head node task to enter EXECUTING state"
