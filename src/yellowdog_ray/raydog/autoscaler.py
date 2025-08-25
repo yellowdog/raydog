@@ -1087,26 +1087,31 @@ class AutoRayDog:
         return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
 
     @staticmethod
-    def _parse_duration(duration_str: str | None) -> timedelta | None:
+    def _parse_duration(duration: Any) -> timedelta | None:
         """
         Regular expression parser to match days, hours, minutes, and seconds
-        (e.g., "1d 2h 30m 15s")'; standalone numbers are treated as seconds.
+        (e.g., "1d 2h 30m 15s")'; standalone integers are treated as minutes.
         """
-        if duration_str is None:
+        if duration is None:
             return None
 
-        # Check if the string is a standalone number; treat as seconds
-        if re.match(r"^\d+$", duration_str.strip()):
-            return timedelta(seconds=int(duration_str))
+        if not isinstance(duration, str):
+            duration = str(duration)
+
+        # Check if the string is a standalone integer; assume minutes
+        # for consistency with other Ray properties
+        if re.match(r"^\d+$", duration.strip()):
+            return timedelta(minutes=int(duration))
 
         # Regular expression to match days, hours, minutes, and seconds (e.g., "1d 2h 30m 15s")
         pattern = r"(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s\s*)?"
-        match = re.match(pattern, duration_str.strip().lower())
+        match = re.match(pattern, duration.strip().lower())
 
-        if not match or not re.search(r"[dhms]", duration_str, re.IGNORECASE):
+        if not match or not re.search(r"[dhms]", duration, re.IGNORECASE):
             raise Exception(
-                f"Invalid duration '{duration_str}' "
-                f"durations should be of form (e.g.) '1d 2h 30m 15s'"
+                f"Invalid duration '{duration}'; "
+                "durations should be of form (e.g.) '1d 2h 30m 15s' "
+                "(a standalone integer is interpreted as 'minutes')"
             )
 
         # Extract days, hours, minutes, seconds (convert to int, default to 0 if not present)
