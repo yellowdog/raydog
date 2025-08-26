@@ -19,7 +19,7 @@ TOTAL_WORKER_NODES = NUM_WORKER_POOLS * NODES_PER_WORKER_POOL
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
-SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts")
+SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts/builder")
 SCRIPT_PATHS = {
     "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
     "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
