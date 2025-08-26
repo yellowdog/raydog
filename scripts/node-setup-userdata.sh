@@ -48,7 +48,7 @@ source $HOME/.local/bin/env
 
 # Set versions to install
 PYTHON_VERSION="3.12.10"
-RAY_VERSION="2.46.0"
+RAY_VERSION="2.48.0"
 
 echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
