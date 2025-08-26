@@ -771,6 +771,9 @@ class AutoRayDog:
             random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8)
         )
 
+        # Set the work requirement name
+        self._work_requirement_name = f"{self._cluster_name}-{self._uniqueid}"
+
         # Establish build and cluster lifetime timeouts
         try:
             self._cluster_lifetime = timedelta(
@@ -885,7 +888,7 @@ class AutoRayDog:
                     f"Worker pool '{self._namespace}/{worker_pool_name}' already "
                     "exists, probably from a previous aborted invocation of 'ray up'"
                 )
-                self._shutdown_worker_pool_by_name(worker_pool_name)
+                self._shutdown_head_node_worker_pool()
             raise
 
         self._worker_pools[flavour] = worker_pool.id
@@ -1076,6 +1079,9 @@ class AutoRayDog:
                     if "InvalidWorkRequirementStatusException" in str(e):
                         pass  # Suppress exception if it's just a state transition error
                 self._work_requirement_id = None
+            else:
+                # In case 'ray up' was interrupted before the ID could be recorded
+                self._cancel_work_requirement()
 
             # Shut down all worker pools
             for worker_pool_id in self._worker_pools.values():
@@ -1083,12 +1089,16 @@ class AutoRayDog:
                 self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
                     worker_pool_id
                 )
-            self._worker_pools = {}
 
-            # In case the head node worker pool creation request was in progress
-            # when a 'ray up' invocation was interrupted
-            if self._head_node_worker_pool_name is not None:
-                self._shutdown_worker_pool_by_name(self._head_node_worker_pool_name)
+            # In case 'ray up' was interrupted before the head node worker pool ID
+            # could be recorded
+            if (
+                self._head_node_worker_pool_name is not None
+                and len(self._worker_pools) == 0
+            ):
+                self._shutdown_head_node_worker_pool()
+
+            self._worker_pools = {}
 
             # Close connections
             self._tag_store.close()
@@ -1114,7 +1124,7 @@ class AutoRayDog:
         else:
             work_requirement = WorkRequirement(
                 namespace=self._namespace,
-                name=f"{self._cluster_name}-{self._uniqueid}",
+                name=self._work_requirement_name,
                 tag=self._cluster_tag,
                 taskGroups=[
                     TaskGroup(
@@ -1278,38 +1288,45 @@ class AutoRayDog:
         # Return a list of node ids
         return [task.id for task in new_tasks]
 
-    def _shutdown_worker_pool_by_name(self, worker_pool_name: str) -> bool:
+    def _shutdown_head_node_worker_pool(self) -> bool:
         """
-        Attempt to shut down a worker pool by its name.
+        Attempt to shut down the head node worker pool using its name. Ignore exceptions.
         """
-        worker_pools: SearchClient[WorkerPoolSummary] = (
-            self.yd_client.worker_pool_client.get_worker_pools(
-                WorkerPoolSearch(
-                    namespace=self._namespace,
-                    name=worker_pool_name,
-                    statuses=[
-                        WorkerPoolStatus.EMPTY,
-                        WorkerPoolStatus.IDLE,
-                        WorkerPoolStatus.PENDING,
-                        WorkerPoolStatus.RUNNING,
-                        WorkerPoolStatus.CONFIGURING,
-                    ],
-                )
+        try:
+            worker_pool_id = self.yd_client.worker_pool_client.get_worker_pool_by_name(
+                namespace=self._namespace, name=self._head_node_worker_pool_name
+            ).id
+            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
+            LOG.info(
+                f"Worker pool '{self._namespace}/{self._head_node_worker_pool_name}' "
+                "was shut down"
             )
-        )
+            return True
+        except:
+            pass
 
-        for worker_pool in worker_pools.list_all():
-            if worker_pool.name == worker_pool_name:
-                try:
-                    self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                        worker_pool.id
-                    )
-                    LOG.info(
-                        f"Worker pool '{self._namespace}/{worker_pool.name}' "
-                        "was shut down"
-                    )
-                    return True
-                except:
-                    break
+        return False
+
+    def _cancel_work_requirement(self) -> bool:
+        """
+        Attempt to cancel the work requirement using its name. Ignore exceptions.
+        """
+        try:
+            work_requirement_id = (
+                self.yd_client.work_client.get_work_requirement_by_name(
+                    namespace=self._namespace,
+                    work_requirement_name=self._work_requirement_name,
+                ).id
+            )
+            self.yd_client.work_client.cancel_work_requirement_by_id(
+                work_requirement_id, abort=True
+            )
+            LOG.info(
+                f"Work requirement '{self._namespace}/{self._work_requirement_name}' "
+                "was cancelled"
+            )
+            return True
+        except:
+            pass
 
         return False
