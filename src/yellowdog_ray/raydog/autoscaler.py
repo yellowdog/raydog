@@ -793,8 +793,9 @@ class AutoRayDog:
         # Get the PlatformClient object
         self.yd_client: PlatformClient = self._get_yd_client()
 
-        # The YD Task ID for the head node task
+        # The YD Task ID for the head node task, and the name of its worker pool
         self.head_node_task_id: str | None = None
+        self._head_node_worker_pool_name: str | Any = None
 
         # Head node IP addresses
         self.head_node_public_ip: str | None = None
@@ -837,6 +838,8 @@ class AutoRayDog:
         images_id = node_config.get(PROP_IMAGES_ID, None)
 
         worker_pool_name = f"{self._cluster_name}-{self._uniqueid}-{flavour}"
+        if node_type == NODE_KIND_HEAD:
+            self._head_node_worker_pool_name = worker_pool_name
 
         compute_requirement_template_usage = ComputeRequirementTemplateUsage(
             templateId=compute_requirement_template_id,
@@ -882,11 +885,7 @@ class AutoRayDog:
                     f"Worker pool '{self._namespace}/{worker_pool_name}' already "
                     "exists, probably from a previous aborted invocation of 'ray up'"
                 )
-                if self._shutdown_worker_pool_by_name(worker_pool_name):
-                    LOG.warning(
-                        f"Worker pool '{self._namespace}/{worker_pool_name}' "
-                        "has been shut down"
-                    )
+                self._shutdown_worker_pool_by_name(worker_pool_name)
             raise
 
         self._worker_pools[flavour] = worker_pool.id
@@ -1085,6 +1084,11 @@ class AutoRayDog:
                     worker_pool_id
                 )
             self._worker_pools = {}
+
+            # In case the head node worker pool creation request was in progress
+            # when a 'ray up' invocation was interrupted
+            if self._head_node_worker_pool_name is not None:
+                self._shutdown_worker_pool_by_name(self._head_node_worker_pool_name)
 
             # Close connections
             self._tag_store.close()
@@ -1299,6 +1303,10 @@ class AutoRayDog:
                 try:
                     self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
                         worker_pool.id
+                    )
+                    LOG.info(
+                        f"Worker pool '{self._namespace}/{worker_pool.name}' "
+                        "was shut down"
                     )
                     return True
                 except:
