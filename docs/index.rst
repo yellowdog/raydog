@@ -139,5 +139,5 @@ This feature must be used with caution:
 Usage Examples
 --------------
 
-Usage examples can be found on GitHub: https://github.com/yellowdog/raydog/tree/main/examples
+Usage examples can be found on GitHub: https://github.com/yellowdog/raydog/tree/main/examples/builder
 
