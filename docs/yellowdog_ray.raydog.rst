@@ -10,3 +10,8 @@ Module contents
    :exclude-members: WorkerNodeWorkerPool
    :show-inheritance:
    :undoc-members:
+
+.. automodule:: yellowdog_ray.raydog.autoscaler
+   :members:
+   :show-inheritance:
+   :undoc-members:
