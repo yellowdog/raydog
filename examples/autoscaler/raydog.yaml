@@ -6,7 +6,7 @@
 cluster_name: "raydog-cluster-test"
 
 #
-# Properties for the RayDog Autoscaler Provider
+# Properties for the RayDog Autoscaler Provider ###############################
 #
 provider:
   type: "external"
@@ -65,6 +65,8 @@ provider:
   # any files specified using the 'file:' syntax will be added to this list
   files_to_upload: []
 
+  # End provider section ######################################################
+
 # YellowDog node types
 #
 # The types of nodes available for the head node and worker nodes:
@@ -99,7 +101,7 @@ available_node_types:
       capture_taskoutput: false
 
 #
-# General Ray properties
+# General Ray properties ######################################################
 #
 
 # Specify the node type of the head node (as configured above).
