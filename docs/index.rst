@@ -18,6 +18,14 @@ These options are discussed in the sections below.
 
    prerequisites
 
+How RayDog Works
+----------------
+
+RayDog operates by modelling a Ray cluster as a YellowDog work requirement, and provisioning YellowDog worker pools to provide the Ray head node and worker nodes.
+
+Behind the scenes, RayDog will create work requirements containing task groups and tasks that represent the Ray processes on a head node and a set of worker nodes. Ray will also create worker pools to supply suitable nodes to run the Ray process tasks. The lifecycle of the work requirement matches the lifecycle of the Ray cluster, and worker pools will be created, scaled, and removed automatically.
+
+This allows the power and flexibility of YellowDog resource provisioning and scaling to be applied to Ray.
 
 Installation
 ------------
