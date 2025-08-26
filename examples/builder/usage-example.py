@@ -84,7 +84,7 @@ def main():
         raydog_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file=f"{SCRIPTS_DIR}/private-key",
+            private_key_file="private-key",
         )
         raydog_tunnels.start_tunnels()
         cluster_address = "ray://localhost:10001"

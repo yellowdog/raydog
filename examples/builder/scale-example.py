@@ -144,7 +144,7 @@ def main():
         ssh_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file=f"{SCRIPTS_DIR}/private-key",
+            private_key_file="private-key",
             ray_tunnel_specs=tunnels,
         )
         ssh_tunnels.start_tunnels()
