@@ -2,7 +2,9 @@
 
 YellowDog's autoscaler is a custom Ray node provider, configured in the normal way with a YAML file. An [example configuration file](raydog.yaml) is provided.
 
-It's important to note that the commands to initialise nodes and start Ray processes are in the node provider config and node type configs, rather than the usual place at the top level of the YAML file.
+- It's important to note that the commands to initialise nodes and start Ray processes are in the node provider config and node type configs, rather than the usual place at the top level of the YAML file.
+
+- The `auth` section from the top level has to be duplicated in the provider config. Manual duplication is unavoidable - the YellowDog node provider needs to be able to connect to the head node (to access tags) at points that aren't expected in the normal autoscaler lifecycle.
 
 The Python code for the autoscaler is in [../../src/yellowdog_ray/raydog/autoscaler.py](../../src/yellowdog_ray/raydog/autoscaler.py).
 

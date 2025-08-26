@@ -30,6 +30,11 @@ provider:
   # Ray head node start script below
   head_node_tag_server_port: 16667
 
+  # Duplicate of the top-level 'auth' property. Required.
+  auth:
+    ssh_user: "yd-agent"
+    ssh_private_key: "private-key"
+
   # The bash script to start the Valkey server and the Ray head node processes;
   # can be specified inline as below, or via a file using the "file: <pathname>"
   # syntax; files will be uploaded from local storage to the head node;
@@ -103,6 +108,7 @@ head_node_type: "ray_head_default"
 # How Ray will authenticate with newly launched nodes; 'private_key'
 # must be a file path. The credentials must allow Ray to SSH to
 # the nodes provisioned by YellowDog.
+# Note that this data must be duplicated in the 'provider' section.
 auth:
   ssh_user: "yd-agent"
   ssh_private_key: "private-key"
