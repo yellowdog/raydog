@@ -888,6 +888,11 @@ class AutoRayDog:
                     f"Worker pool '{self._namespace}/{worker_pool_name}' already "
                     "exists, probably from a previous aborted invocation of 'ray up'"
                 )
+                if self._shutdown_worker_pool_by_name(worker_pool_name):
+                    LOG.warning(
+                        f"Worker pool '{self._namespace}/{worker_pool_name}' "
+                        "has been shut down"
+                    )
             raise
 
         self._worker_pools[flavour] = worker_pool.id
@@ -1274,3 +1279,35 @@ class AutoRayDog:
 
         # Return a list of node ids
         return [task.id for task in new_tasks]
+
+    def _shutdown_worker_pool_by_name(self, worker_pool_name: str) -> bool:
+        """
+        Attempt to shut down a worker pool by its name.
+        """
+        worker_pools: SearchClient[WorkerPoolSummary] = (
+            self.yd_client.worker_pool_client.get_worker_pools(
+                WorkerPoolSearch(
+                    namespace=self._namespace,
+                    name=worker_pool_name,
+                    statuses=[
+                        WorkerPoolStatus.EMPTY,
+                        WorkerPoolStatus.IDLE,
+                        WorkerPoolStatus.PENDING,
+                        WorkerPoolStatus.RUNNING,
+                        WorkerPoolStatus.CONFIGURING,
+                    ],
+                )
+            )
+        )
+
+        for worker_pool in worker_pools.list_all():
+            if worker_pool.name == worker_pool_name:
+                try:
+                    self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
+                        worker_pool.id
+                    )
+                    return True
+                except:
+                    break
+
+        return False
