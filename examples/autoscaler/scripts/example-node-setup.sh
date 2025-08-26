@@ -13,6 +13,8 @@ curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main
 YD_AGENT_USER="yd-agent"
 YD_AGENT_HOME="/opt/yellowdog/agent"
 
+################################################################################
+# ToDo: remove or comment out
 echo "Adding $YD_AGENT_USER to passwordless sudoers"
 
 ADMIN_GRP="sudo"
@@ -58,9 +60,12 @@ uv venv --python $PYTHON_VERSION $VENV
 source $VENV/bin/activate
 
 echo "Installing Ray v$RAY_VERSION"
+
+# ToDo: remove packages that are implied by 'yellowdog-ray'
 uv pip install "ray[client]==$RAY_VERSION" "ray[default]==$RAY_VERSION" sshtunnel \
                yellowdog-sdk redis yellowdog-ray
 
+# ToDo: remove
 # Temporary: overwrite autoscaler.py with the current version & install dotenv
 wget https://s3.eu-west-2.amazonaws.com/\
 tech.yellowdog.devsandbox.raydog.autoscaler/autoscaler.py \
