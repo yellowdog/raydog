@@ -10,10 +10,3 @@ Subpackages
    yellowdog_ray.raydog
    yellowdog_ray.utils
 
-Module contents
----------------
-
-.. automodule:: yellowdog_ray
-   :members:
-   :show-inheritance:
-   :undoc-members:

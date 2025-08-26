@@ -1,9 +1,6 @@
 yellowdog\_ray.raydog package
 =================================
 
-Module contents
----------------
-
 .. automodule:: yellowdog_ray.raydog.builder
    :members:
    :special-members: __init__
