@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 
+# Ray node setup example script for Ubuntu nodes.
+
 set -euo pipefail
 
 echo "Installing the YellowDog agent"
@@ -46,31 +48,28 @@ export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
 source $HOME/.local/bin/env
 
+# Set versions of Python and Ray
 PYTHON_VERSION="3.12.10"
-echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
+RAY_VERSION="2.48.0"
+
+echo "Installing Python v$PYTHON_VERSION; creating/activating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
 uv venv --python $PYTHON_VERSION $VENV
-VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
-echo "Installing Ray"
-uv pip install "ray[client]" "ray[default]" sshtunnel yellowdog-sdk redis numpy
+echo "Installing Ray v$RAY_VERSION"
+uv pip install "ray[client]==$RAY_VERSION" "ray[default]==$RAY_VERSION" sshtunnel \
+               yellowdog-sdk redis yellowdog-ray
+
+# Temporary: overwrite autoscaler.py with the current version & install dotenv
+wget https://s3.eu-west-2.amazonaws.com/\
+tech.yellowdog.devsandbox.raydog.autoscaler/autoscaler.py \
+     -O $VENV/lib/python3.12/site-packages/yellowdog_ray/raydog/autoscaler.py
+uv pip install python-dotenv
 
 ################################################################################
 
-echo "Downloading RayDog files"
-
-curl -L -o $YD_AGENT_HOME/raydog.tgz "https://drive.google.com/uc?export=download&id=1MM0OpucCLO8wySHmi_U-YyD9TD8Vt9yz"
-tar -xf $YD_AGENT_HOME/raydog.tgz -C $YD_AGENT_HOME 
-
-echo "Modifying Ray script"
-RAYFILE=$VENV/bin/ray 
-cp $RAYFILE $RAYFILE.bak
-awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
-
-echo "Create bashrc to setup the Ray environment"
-echo "export PYTHONPATH=/opt/yellowdog/agent" > $YD_AGENT_HOME/.bashrc
-echo "VIRTUAL_ENV_DISABLE_PROMPT=true" >> $YD_AGENT_HOME/.bashrc
+echo "Create/extend .bashrc to set up the Ray environment"
 echo "source $VENV/bin/activate" >> $YD_AGENT_HOME/.bashrc
 
 ################################################################################
@@ -83,5 +82,4 @@ ufw disable &> /dev/null
 echo "Setting file/directory ownership to $YD_AGENT_USER"
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME
 
-
-# Note: the Agent configuration script will restart the Agent
+################################################################################
