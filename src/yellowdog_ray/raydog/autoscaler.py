@@ -13,7 +13,6 @@ from typing import Any
 
 import redis
 from dotenv import load_dotenv
-from ray.autoscaler._private.cli_logger import cli_logger
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
 from ray.autoscaler.tags import (
@@ -110,9 +109,6 @@ IDLE_NODE_YD_SHUTDOWN = timedelta(seconds=0)
 MAX_NODES_IN_WORKER_POOL = 100000
 
 LOG = logging.getLogger(__name__)
-# ToDo: Remove
-LOG.setLevel(logging.DEBUG)
-cli_logger.configure(verbosity=2)
 
 
 class RayDogNodeProvider(NodeProvider):
@@ -491,9 +487,7 @@ class RayDogNodeProvider(NodeProvider):
                     self._tag_store.update_tags(node_id, tags)
 
         except KeyboardInterrupt:
-            LOG.warning(
-                "Caught KeyboardInterrupt in create_node, cleaning up resources"
-            )
+            LOG.info("Caught KeyboardInterrupt in create_node, cleaning up resources")
             self._auto_raydog.shut_down()
             raise
 
