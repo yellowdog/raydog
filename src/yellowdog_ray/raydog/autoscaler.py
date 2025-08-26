@@ -867,7 +867,11 @@ class AutoRayDog:
             ),
             idlePoolShutdown=AutoShutdown(
                 enabled=True,
-                timeout=self._cluster_lifetime,
+                timeout=(
+                    timedelta(seconds=0)
+                    if node_type == NODE_KIND_HEAD
+                    else self._cluster_lifetime
+                ),
             ),
         )
 
