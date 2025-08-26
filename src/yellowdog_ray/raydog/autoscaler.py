@@ -875,11 +875,20 @@ class AutoRayDog:
             ),
         )
 
-        worker_pool: WorkerPool = (
-            self.yd_client.worker_pool_client.provision_worker_pool(
-                compute_requirement_template_usage, provisioned_worker_pool_properties
+        try:
+            worker_pool: WorkerPool = (
+                self.yd_client.worker_pool_client.provision_worker_pool(
+                    compute_requirement_template_usage,
+                    provisioned_worker_pool_properties,
+                )
             )
-        )
+        except InvalidRequestException as e:
+            if "already exists" in str(e):
+                LOG.error(
+                    f"Worker pool '{self._namespace}/{worker_pool_name}' already "
+                    "exists, probably from a previous aborted invocation of 'ray up'"
+                )
+            raise
 
         self._worker_pools[flavour] = worker_pool.id
 
