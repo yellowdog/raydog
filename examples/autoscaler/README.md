@@ -1,6 +1,6 @@
 # The RayDog Autoscaler
 
-YellowDog's autoscaler is a custom Ray node provider, configured in the normal way with a YAML file. An [example configuration file](raydog-autoscaler.yaml) is provided.
+YellowDog's autoscaler is a custom Ray node provider, configured in the normal way with a YAML file. An [example configuration file](raydog.yaml) is provided.
 
 A couple of non-standard aspects to the config:
 

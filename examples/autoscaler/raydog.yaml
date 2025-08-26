@@ -77,8 +77,8 @@ available_node_types:
     node_config:
       compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
       images_id: "ami-0c6175878f7e01e70"
-      userdata: "file:example-node-setup.sh"
-      extra_userdata: "file:install-valkey.sh"
+      userdata: "file:scripts/example-node-setup.sh"
+      extra_userdata: "file:scripts/install-valkey.sh"
       metrics_enabled: true
       capture_taskoutput: false
 
@@ -89,7 +89,7 @@ available_node_types:
     node_config:
       compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
       images_id: "ami-0c6175878f7e01e70"
-      userdata: "file:example-node-setup.sh"
+      userdata: "file:scripts/example-node-setup.sh"
       metrics_enabled: true
       capture_taskoutput: false
 

@@ -54,7 +54,7 @@ Ray Head Node and Worker Node Start-Up Scripts
 Default Scripts
 ^^^^^^^^^^^^^^^
 
-Default Bash scripts are provided for the script arguments in the constructor, and are found in the ``scripts/builder`` directory on GitHub: https://github.com/yellowdog/raydog/tree/main/scripts/builder.
+Default Bash scripts are provided for the script arguments in the constructor, and are found in the ``examples/builder/scripts`` directory on GitHub: https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts.
 
 If these scripts are used 'as-is', the Ray virtual environment to be activated must be situated in the YellowDog agent home directory at ``/opt/yellowdog/agent/venv``.
 
