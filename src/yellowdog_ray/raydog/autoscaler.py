@@ -59,8 +59,8 @@ YD_API_KEY_SECRET_VAR = "YD_API_KEY_SECRET"
 # Provider configuration property names
 #   Required
 PROP_CLUSTER_NAMESPACE = "cluster_namespace"
-PROP_HEAD_START_RAY_SCRIPT = "head_start_ray_script"
-PROP_WORKER_START_RAY_SCRIPT = "worker_start_ray_script"
+PROP_RAY_HEAD_NODE_TASK_SCRIPT = "ray_head_node_task_script"
+PROP_RAY_WORKER_NODE_TASK_SCRIPT = "ray_worker_node_task_script"
 #   Optional
 PROP_CLUSTER_TAG = "cluster_tag"
 PROP_CLUSTER_LIFETIME_HOURS = "cluster_lifetime_hours"
@@ -133,13 +133,13 @@ class RayDogNodeProvider(NodeProvider):
         provider = cluster_config.get(PROP_PROVIDER, {})
         if PROP_CLUSTER_NAMESPACE not in provider:
             raise ValueError(f"Missing '{PROP_CLUSTER_NAMESPACE}' in provider config")
-        if PROP_HEAD_START_RAY_SCRIPT not in provider:
+        if PROP_RAY_HEAD_NODE_TASK_SCRIPT not in provider:
             raise ValueError(
-                f"Missing '{PROP_HEAD_START_RAY_SCRIPT}' in provider config"
+                f"Missing '{PROP_RAY_HEAD_NODE_TASK_SCRIPT}' in provider config"
             )
-        if PROP_WORKER_START_RAY_SCRIPT not in provider:
+        if PROP_RAY_WORKER_NODE_TASK_SCRIPT not in provider:
             raise ValueError(
-                f"Missing '{PROP_WORKER_START_RAY_SCRIPT}' in provider config"
+                f"Missing '{PROP_RAY_WORKER_NODE_TASK_SCRIPT}' in provider config"
             )
 
         if not cluster_config.get(PROP_AVAILABLE_NODE_TYPES):
@@ -442,7 +442,7 @@ class RayDogNodeProvider(NodeProvider):
                 head_id = self._auto_raydog.create_head_node_task(
                     flavour=flavour,
                     ray_start_script=self._get_script_from_provider_config(
-                        PROP_HEAD_START_RAY_SCRIPT
+                        PROP_RAY_HEAD_NODE_TASK_SCRIPT
                     ),
                     capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
                 )
@@ -480,7 +480,7 @@ class RayDogNodeProvider(NodeProvider):
                 new_nodes = self._auto_raydog.create_worker_node_tasks(
                     flavour=flavour,
                     ray_start_script=self._get_script_from_provider_config(
-                        PROP_WORKER_START_RAY_SCRIPT
+                        PROP_RAY_WORKER_NODE_TASK_SCRIPT
                     ),
                     count=count,
                     capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
