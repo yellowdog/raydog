@@ -1,79 +1,111 @@
+#
 # Configuration for the YellowDog RayDog autoscaler
+#
+
+# A name for this cluster
+cluster_name: "raydog-cluster-test"
+
+#
+# Properties for the RayDog Autoscaler Provider
+#
 provider:
   type: "external"
-  module: yellowdog_ray.raydog.autoscaler.RayDogNodeProvider
-  
-  cluster_namespace: "raydog-auto-pwt"
-  cluster_tag: "raydog-pwt"
-  cluster_lifetime: 30m
-  head_node_build_timeout: 10m
+  module: "yellowdog_ray.raydog.autoscaler.RayDogNodeProvider"
 
-  # foreground_node_launch: True
+  # The namespace for the YellowDog work requirement and worker pools
+  cluster_namespace: "project-raydog"
 
-#  initialization_script: file:example-node-setup.sh
+  # An optional tag for the YellowDog work requirement and worker pools
+  cluster_tag: "experimental"
 
-  head_start_ray_script: 
-  - "#!/bin/bash -x"
-  - "source $HOME/.bashrc"
-  - "$HOME/valkey*/bin/valkey-server --port 16667 &"
-  - "until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 2; done"
-  - trap "ray stop; echo Ray stopped" EXIT
-  - set -euo pipefail
-  - ray stop
-  - ray start --disable-usage-stats --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=0 --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
- 
-  worker_start_ray_script:
-  - "#!/bin/bash"
-  - "source $HOME/.bashrc"
-  - trap "ray stop; echo Ray stopped" EXIT
-  - set -euo pipefail
-  - ray stop
-  - ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
+  # An optional lifetime for the cluster; defaults to 1 hour
+  cluster_lifetime_hours: 0.5
 
-  # Have to duplicate the auth settings, so that the RayDog provider can access the tag store
-  auth:
-    ssh_user: yd-agent
-    ssh_private_key: private-key
+  # An optional timeout for building and starting the ray head node;
+  # defaults to 10 minutes.
+  head_node_build_timeout_minutes: 5.0
 
-# A name for the head node and workers of this cluster (not case-sensitive)
-cluster_name: raydog-cluster-auto-pwt
+  # The port to use for the Valkey server on the head node;
+  # optional, defaults to 16667 and must match the port number used in the
+  # Ray head node start script below
+  head_node_tag_server_port: 16667
 
-# The types of nodes that are available
+  # The bash script to start the Valkey server and the Ray head node processes;
+  # can be specified inline as below, or via a file using the "file: <pathname>"
+  # syntax; files will be uploaded from local storage to the head node;
+  # this script is used as a YellowDog task
+  ray_head_node_task_script: |
+    #!/bin/bash -x
+    source $HOME/.bashrc
+    $HOME/valkey*/bin/valkey-server --port 16667 &
+    until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 2; done
+    trap "ray stop; echo Ray stopped" EXIT
+    set -euo pipefail
+    ray stop
+    ray start --disable-usage-stats --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=0 \
+              --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
+
+  # The bash script to start the Ray worker node processes; can be specified inline
+  # as below, or via a file using the "file: <pathname>" syntax; files will be uploaded
+  # from local storage to the head node; this script is used as a YellowDog task
+  ray_worker_node_task_script: |
+    #!/bin/bash -x
+    source $HOME/.bashrc
+    trap "ray stop; echo Ray stopped" EXIT
+    set -euo pipefail
+    ray stop
+    ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
+
+  # An optional list of scripts to upload to the head node from local storage;
+  # any files specified using the 'file:' syntax will be added to this list
+  files_to_upload: []
+
+# YellowDog node types
+#
+# The types of nodes available for the head node and worker nodes:
+# - 'compute_requirement_template' must be specified; the other properties are
+#   optional but may be required depending on your setup
+# - 'userdata' and 'extra_userdata' are concatenated, and can be supplied inline
+#   or by using the "file: <pathname>" syntax
+# - 'metrics_enabled' enables node metric display
+# - 'capture_taskoutput' uploads the task script console output to the YellowDog
+#   object store
+
 available_node_types:
   ray_head_default:
     resources: { "CPU": 0 }
     node_config:
-      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead
-      images_id: ami-0c6175878f7e01e70
-      userdata: file:example-node-setup.sh
+      compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+      images_id: "ami-0c6175878f7e01e70"
+      userdata: "file:example-node-setup.sh"
+      extra_userdata: "file:install-valkey.sh"
       metrics_enabled: true
+      capture_taskoutput: false
 
   ray_worker_small:
     resources: { "CPU": 1 }
     min_workers: 0
     max_workers: 3
     node_config:
-      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker
-      images_id: ami-0c6175878f7e01e70
-      userdata: file:example-node-setup.sh
+      compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
+      images_id: "ami-0c6175878f7e01e70"
+      userdata: "file:example-node-setup.sh"
       metrics_enabled: true
+      capture_taskoutput: false
 
-#  ray_worker_small_2:
-#    resources: { "CPU": 1 }
-#    min_workers: 0
-#    max_workers: 5
-#    node_config:
-#      compute_requirement_template: yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker
-#      images_id: ami-0c6175878f7e01e70
-#      max_nodes: 5
+#
+# General Ray properties
+#
 
 # Specify the node type of the head node (as configured above).
-head_node_type: ray_head_default
+head_node_type: "ray_head_default"
 
-# How Ray will authenticate with newly launched nodes.
+# How Ray will authenticate with newly launched nodes; 'private_key'
+# must be a file path. The credentials must allow Ray to SSH to
+# the nodes provisioned by YellowDog.
 auth:
-  ssh_user: yd-agent
-  ssh_private_key: private-key
+  ssh_user: "yd-agent"
+  ssh_private_key: "private-key"
 
 # The maximum number of workers nodes to launch in addition to the head node
 max_workers: 1000
@@ -82,7 +114,7 @@ max_workers: 1000
 # E.g., if the task requires additional nodes, the autoscaler will gradually
 # scale up the cluster in chunks of upscaling_speed*currently_running_nodes.
 # This number should be > 0.
-upscaling_speed: 1.0
+upscaling_speed: 1000.0
 
 # If a node is idle for this many minutes, it will be removed.
 idle_timeout_minutes: 1
@@ -115,16 +147,11 @@ rsync_exclude:
 rsync_filter:
     - ".gitignore"
 
-# RayDog handles setting-up nodes up and starting Ray 
-# Do any customisation you need in the 'provider' section
+# These Ray properties should be left empty when using the RayDog autoscaler; perform all
+# node setup actions via userdata, and all Ray initialisation via the task scripts
 initialization_commands: []
-
 setup_commands: []
-
 head_setup_commands: []
-
 worker_setup_commands: []
-
 head_start_ray_commands: []
-
 worker_start_ray_commands: []
