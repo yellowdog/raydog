@@ -1,7 +1,11 @@
-RayDog Cluster Builder
-======================
+RayDog Builder
+==============
 
-The RayDog cluster builder uses YellowDog to provision Ray clusters manually. In its initial form it creates manually dimensioned clusters, containing varying node types. Worker pools containing configurable numbers of Ray worker nodes can be added and removed dynamically to expand and contract the cluster during its lifetime.
+The RayDog cluster builder uses YellowDog to provision Ray clusters manually.
+
+Worker pools containing configurable numbers of Ray worker nodes of different types can be added and removed dynamically to expand and contract the cluster during its lifetime.
+
+The Builder is intended for integration in user code.
 
 Usage
 -----

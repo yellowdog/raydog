@@ -6,22 +6,16 @@ Welcome to the documentation for YellowDog's integration with Ray: **RayDog**. T
 
 There are two usage models for RayDog:
 
-1. A manual Cluster Builder library that allows manual control of the scale and node types within the Ray cluster.
+1. A manual **Builder** library that allows manual control of the scale and node types within the Ray cluster.
 
-2. A Ray Autoscaler provider, that uses Ray autoscaling to control the scale and node types with the Ray cluster.
+2. A Ray **Autoscaler** provider, that uses Ray autoscaling to control the scale and node types with the Ray cluster.
 
 These options are discussed in the sections below.
-
-.. toctree::
-   :maxdepth: 2
-   :caption: YellowDog Prerequisites
-
-   prerequisites
 
 How RayDog Works
 ----------------
 
-RayDog operates by modelling a Ray cluster as a YellowDog work requirement, and provisioning YellowDog worker pools to provide the Ray head node and worker nodes.
+RayDog operates by modelling a Ray cluster as a YellowDog work requirement, and provisioning YellowDog worker pools to provide the Ray head node and worker nodes. This model applies both to the builder and tbe autoscaler.
 
 Behind the scenes, RayDog will create work requirements containing task groups and tasks that represent the Ray processes on a head node and a set of worker nodes. Ray will also create worker pools to supply suitable nodes to run the Ray process tasks. The lifecycle of the work requirement matches the lifecycle of the Ray cluster, and worker pools will be created, scaled, and removed automatically.
 
@@ -36,9 +30,16 @@ Install or upgrade from PyPI, e.g.::
 
 RayDog requires Python 3.10 or later.
 
+The RayDog ``yellowdog-ray`` package includes both the builder and autoscaler.
+
+YellowDog Prequisites
+---------------------
+
+Use of RayDog requires a YellowDog account populated with cloud provider credentials, one or more compute source templates, one or more compute requirement templates, and an application key/secret with the permissions to create and manage worker pools and work requirements.
+
 .. toctree::
    :maxdepth: 2
-   :caption: The RayDog Cluster Builder
+   :caption: The RayDog Builder
 
    builder
 
