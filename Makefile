@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := no_op
 
-SRC = src/yellowdog_ray/*.py src/yellowdog_ray/raydog/*.py src/yellowdog_ray/utils/*.py examples/*.py
+SRC = src/yellowdog_ray/*.py src/yellowdog_ray/raydog/*.py src/yellowdog_ray/utils/*.py examples/builder/*.py examples/autoscaler/*.py
 TESTS =
 BUILD_DIST = build dist src/yellowdog_ray.egg-info
 PYCACHE = __pycache__
