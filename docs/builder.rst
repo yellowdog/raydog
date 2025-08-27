@@ -5,6 +5,8 @@ The RayDog cluster builder uses YellowDog to provision Ray clusters manually.
 
 Worker pools containing configurable numbers of Ray worker nodes of different types can be added and removed dynamically to expand and contract the cluster during its lifetime.
 
+The RayDog Builder can be faster in operation than the Autoscaler, because it will immediately provision worker pools of the requested sizes rather than waiting for Ray job sumbissions to drive the Ray autoscaler into provisioning additional resources. Its limitation is that the match between the resources in the cluster and submitted jobs must be balanced manually, and the cluster must also be downscaled manually.
+
 The Builder is intended for integration in user code.
 
 Usage
@@ -37,7 +39,7 @@ Ray Head Node and Worker Node Start-Up Scripts
 Default Scripts
 ^^^^^^^^^^^^^^^
 
-Default Bash scripts are provided for the script arguments in the constructor, and are found in the ``examples/builder/scripts`` directory on GitHub: https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts.
+Default Bash scripts are provided for the script arguments in the constructor, and are found at: https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts.
 
 If these scripts are used 'as-is', the Ray virtual environment to be activated must be situated in the YellowDog agent home directory at ``/opt/yellowdog/agent/venv``.
 
@@ -121,4 +123,4 @@ To use the saved state:
 Usage Examples
 --------------
 
-Usage examples can be found on GitHub: https://github.com/yellowdog/raydog/tree/main/examples/builder
+Usage examples can be found at: https://github.com/yellowdog/raydog/tree/main/examples/builder
