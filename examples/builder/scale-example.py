@@ -2,10 +2,8 @@
 
 # Dimensioning the cluster: total workers is the product of the vars below
 # Each compute requirement is split across eu-west-2{a, b, c}
-# Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
-#       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
+WORKER_NODES_PER_POOL = 2
 NUM_WORKER_POOLS = 2
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
