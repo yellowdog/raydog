@@ -60,18 +60,9 @@ VENV=$YD_AGENT_HOME/venv
 uv venv --python $PYTHON_VERSION $VENV
 source $VENV/bin/activate
 
-echo "Installing Ray v$RAY_VERSION"
-
-# ToDo: remove packages that are implied by 'yellowdog-ray'
-uv pip install "ray[client]==$RAY_VERSION" "ray[default]==$RAY_VERSION" sshtunnel \
-               yellowdog-sdk redis yellowdog-ray
-
-# ToDo: remove
-# Temporary: overwrite autoscaler.py with the current version & install dotenv
-wget https://s3.eu-west-2.amazonaws.com/\
-tech.yellowdog.devsandbox.raydog.autoscaler/autoscaler.py \
-     -O $VENV/lib/python3.12/site-packages/yellowdog_ray/raydog/autoscaler.py
-uv pip install python-dotenv
+echo "Installing Ray v$RAY_VERSION and RayDog"
+uv pip install "ray[client]==$RAY_VERSION" "ray[default]==$RAY_VERSION" \
+               yellowdog-ray
 
 ################################################################################
 

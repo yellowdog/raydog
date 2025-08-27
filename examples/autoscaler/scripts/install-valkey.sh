@@ -1,4 +1,5 @@
 #!/bin/bash
+
 VALKEY_VERSION=8.1.1
 
 YD_AGENT_HOME="/opt/yellowdog/agent"
