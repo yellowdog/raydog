@@ -100,6 +100,8 @@ available_node_types:
       metrics_enabled: true
       capture_taskoutput: false
 
+  # Additional node types may be defined below ...
+
 #
 # General Ray properties ######################################################
 #

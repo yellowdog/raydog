@@ -2,6 +2,10 @@
 
 # Ray node setup example script for Ubuntu nodes.
 
+# Set versions of Python and Ray
+PYTHON_VERSION="3.12.10"
+RAY_VERSION="2.48.0"
+
 set -euo pipefail
 
 echo "Installing the YellowDog agent"
@@ -14,7 +18,7 @@ YD_AGENT_USER="yd-agent"
 YD_AGENT_HOME="/opt/yellowdog/agent"
 
 ################################################################################
-# ToDo: remove or comment out
+# Optional
 echo "Adding $YD_AGENT_USER to passwordless sudoers"
 
 ADMIN_GRP="sudo"
@@ -23,6 +27,7 @@ echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
         /etc/sudoers.d/020-$YD_AGENT_USER
 
 ################################################################################
+# Replace with your own public key
 echo "Adding public SSH key for $YD_AGENT_USER"
 
 mkdir -p $YD_AGENT_HOME/.ssh
@@ -49,10 +54,6 @@ echo "Installing 'uv'"
 export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
 source $HOME/.local/bin/env
-
-# Set versions of Python and Ray
-PYTHON_VERSION="3.12.10"
-RAY_VERSION="2.48.0"
 
 echo "Installing Python v$PYTHON_VERSION; creating/activating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv

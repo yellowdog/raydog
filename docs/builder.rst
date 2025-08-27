@@ -111,13 +111,12 @@ To use the saved state:
 2. Load the saved state using one of the methods ``load_saved_state_from_json()``, supplying a JSON string as the argument, or ``load_saved_state_from_json_file()``, supplying the name of a file containing JSON content as the argument
 3. Invoke the ``shut_down()`` method; this will cancel the work requirement (aborting executing tasks) and shut down all worker pools
 
-Caveats
-^^^^^^^
+.. note::
 
-This feature must be used with caution:
+    This feature must be used with caution:
 
-1. Only save the state for a RayDog cluster that has already been built, and note that any subsequent changes (adding or removing worker pools) will not be reflected in existing saved state
-2. When loading state into a ``RayDogClusterProxy`` object the cluster state may now be invalid and the ``shut_down()`` method will throw exceptions if asked to operate on a stale work requirement or worker pools.
+    1. Only save the state for a RayDog cluster that has already been built, and note that any subsequent changes (adding or removing worker pools) will not be reflected in existing saved state
+    2. When loading state into a ``RayDogClusterProxy`` object the cluster state may now be invalid and the ``shut_down()`` method will throw exceptions if asked to operate on a stale work requirement or worker pools.
 
 Usage Examples
 --------------
