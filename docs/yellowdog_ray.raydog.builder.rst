@@ -1,8 +1,5 @@
-yellowdog\_ray.raydog package
-=================================
-
-Module contents
----------------
+yellowdog\_ray.raydog Builder
+=============================
 
 .. automodule:: yellowdog_ray.raydog.builder
    :members:

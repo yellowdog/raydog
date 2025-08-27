@@ -1,0 +1,167 @@
+#
+# Configuration for the YellowDog RayDog autoscaler
+#
+
+# A name for this cluster
+cluster_name: "raydog-cluster-test"
+
+#
+# Properties for the RayDog Autoscaler Provider ###############################
+#
+provider:
+  type: "external"
+  module: "yellowdog_ray.raydog.autoscaler.RayDogNodeProvider"
+
+  # The namespace for the YellowDog work requirement and worker pools
+  cluster_namespace: "project-raydog"
+
+  # An optional tag for the YellowDog work requirement and worker pools
+  cluster_tag: "experimental"
+
+  # An optional lifetime for the cluster; defaults to 1 hour
+  cluster_lifetime_hours: 0.5
+
+  # An optional timeout for building and starting the ray head node;
+  # defaults to 10 minutes.
+  head_node_build_timeout_minutes: 5.0
+
+  # The port to use for the Valkey server on the head node;
+  # optional, defaults to 16667 and must match the port number used in the
+  # Ray head node start script below
+  head_node_tag_server_port: 16667
+
+  # Duplicate of the top-level 'auth' property. Required.
+  auth:
+    ssh_user: "yd-agent"
+    ssh_private_key: "private-key"
+
+  # The bash script to start the Valkey server and the Ray head node processes;
+  # can be specified inline as below, or via a file using the "file: <pathname>"
+  # syntax; files will be uploaded from local storage to the head node;
+  # this script is used as a YellowDog task
+  ray_head_node_task_script: |
+    #!/bin/bash -x
+    source $HOME/.bashrc
+    $HOME/valkey*/bin/valkey-server --port 16667 &
+    until [ -f $HOME/ray_bootstrap_key.pem ]; do sleep 2; done
+    trap "ray stop; echo Ray stopped" EXIT
+    set -euo pipefail
+    ray stop
+    ray start --disable-usage-stats --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=0 \
+              --autoscaling-config=/opt/yellowdog/agent/ray_bootstrap_config.yaml --block
+
+  # The bash script to start the Ray worker node processes; can be specified inline
+  # as below, or via a file using the "file: <pathname>" syntax; files will be uploaded
+  # from local storage to the head node; this script is used as a YellowDog task
+  ray_worker_node_task_script: |
+    #!/bin/bash -x
+    source $HOME/.bashrc
+    trap "ray stop; echo Ray stopped" EXIT
+    set -euo pipefail
+    ray stop
+    ray start --disable-usage-stats --address=$RAY_HEAD_IP:6379 --block
+
+  # An optional list of scripts to upload to the head node from local storage;
+  # any files specified using the 'file:' syntax will be added to this list
+  files_to_upload: []
+
+  # End provider section ######################################################
+
+# YellowDog node types
+#
+# The types of nodes available for the head node and worker nodes:
+# - 'compute_requirement_template' must be specified; the other properties are
+#   optional but may be required depending on your setup
+# - 'userdata' and 'extra_userdata' are concatenated, and can be supplied inline
+#   or by using the "file: <pathname>" syntax
+# - 'metrics_enabled' enables node metric display
+# - 'capture_taskoutput' uploads the task script console output to the YellowDog
+#   object store
+
+available_node_types:
+  ray_head_default:
+    resources: { "CPU": 0 }
+    node_config:
+      compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
+      images_id: "ami-0c6175878f7e01e70"
+      userdata: "file:scripts/example-node-setup.sh"
+      extra_userdata: "file:scripts/install-valkey.sh"
+      metrics_enabled: true
+      capture_taskoutput: false
+
+  ray_worker_small:
+    resources: { "CPU": 1 }
+    min_workers: 0
+    max_workers: 3
+    node_config:
+      compute_requirement_template: "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayworker"
+      images_id: "ami-0c6175878f7e01e70"
+      userdata: "file:scripts/example-node-setup.sh"
+      metrics_enabled: true
+      capture_taskoutput: false
+
+  # Additional node types may be defined below ...
+
+#
+# General Ray properties ######################################################
+#
+
+# Specify the node type of the head node (as configured above).
+head_node_type: "ray_head_default"
+
+# How Ray will authenticate with newly launched nodes; 'private_key'
+# must be a file path. The credentials must allow Ray to SSH to
+# the nodes provisioned by YellowDog.
+# Note that this data must be duplicated in the 'provider' section.
+auth:
+  ssh_user: "yd-agent"
+  ssh_private_key: "private-key"
+
+# The maximum number of workers nodes to launch in addition to the head node
+max_workers: 1000
+
+# The autoscaler will scale up the cluster faster with higher upscaling speed.
+# E.g., if the task requires additional nodes, the autoscaler will gradually
+# scale up the cluster in chunks of upscaling_speed*currently_running_nodes.
+# This number should be > 0.
+upscaling_speed: 1000.0
+
+# If a node is idle for this many minutes, it will be removed.
+idle_timeout_minutes: 1
+
+# Files or directories to copy to the head and worker nodes. The format is a
+# dictionary from REMOTE_PATH: LOCAL_PATH, e.g.
+file_mounts: {
+#    "/path1/on/remote/machine": "/path1/on/local/machine",
+#    "/path2/on/remote/machine": "/path2/on/local/machine",
+}
+
+# Files or directories to copy from the head node to the worker nodes. The format is a
+# list of paths. The same path on the head node will be copied to the worker node.
+# This behavior is a subset of the file_mounts behavior. In the vast majority of cases
+# you should just use file_mounts. Only use this if you know what you're doing!
+cluster_synced_files: []
+
+# Whether changes to directories in file_mounts or cluster_synced_files in the head node
+# should sync to the worker node continuously
+file_mounts_sync_continuously: False
+
+# Patterns for files to exclude when running rsync up or rsync down
+rsync_exclude:
+    - "**/.git"
+    - "**/.git/**"
+
+# Pattern files to use for filtering out files when running rsync up or rsync down. The file is searched for
+# in the source directory and recursively through all subdirectories. For example, if .gitignore is provided
+# as a value, the behavior will match git's behavior for finding and using .gitignore files.
+rsync_filter:
+    - ".gitignore"
+
+# These Ray properties should be left empty when using the RayDog autoscaler; perform all
+# node setup actions via userdata, and all Ray initialisation via the task scripts
+initialization_commands: []
+setup_commands: []
+head_setup_commands: []
+worker_setup_commands: []
+head_start_ray_commands: []
+worker_start_ray_commands: []

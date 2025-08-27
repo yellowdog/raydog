@@ -422,7 +422,7 @@ class RayDogCluster:
 
     def build(
         self, head_node_build_timeout: timedelta | None = None
-    ) -> (str, str | None):
+    ) -> tuple[str, str | None]:
         """
         Build the cluster. This method will block until the Ray head node
         is ready, and optionally also the observability node.
@@ -525,8 +525,19 @@ class RayDogCluster:
 
         while True:  # Check for execution of the head node task
             task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
+
             if task.status == TaskStatus.EXECUTING:
                 break
+
+            if task.status in [
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+                TaskStatus.ABORTED,
+                TaskStatus.DISCARDED,
+            ]:
+                self.shut_down()
+                raise Exception(f"Unexpected head node task status: '{task.status}'")
+
             if (
                 head_node_build_timeout is not None
                 and datetime.now(timezone.utc) - start_time >= head_node_build_timeout
@@ -535,6 +546,7 @@ class RayDogCluster:
                 raise TimeoutError(
                     "Timeout waiting for Ray head node task to enter EXECUTING state"
                 )
+
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL.seconds)
 
         # Set the head node ID and get the node details

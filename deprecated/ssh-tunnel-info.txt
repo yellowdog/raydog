@@ -1,7 +1,0 @@
-# If setting up tunnels manually, use the following
-
-# Ray Client
-ssh -L 10001:localhost:10001 -i private-key yd-agent@<head-node-public-ip>
-
-# Ray Dashboard
-ssh -L 8265:localhost:8265 -i private-key yd-agent@<head-node-public-ip>

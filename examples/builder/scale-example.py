@@ -2,10 +2,8 @@
 
 # Dimensioning the cluster: total workers is the product of the vars below
 # Each compute requirement is split across eu-west-2{a, b, c}
-# Note: EBS limit of 500 per provisioning request, so max WORKER_NODES_PER_POOL
-#       should be 1,500 (500 instances per AZ)
 
-WORKER_NODES_PER_POOL = 2  # Must be <= 1500, assuming split across 3 AZs
+WORKER_NODES_PER_POOL = 2
 NUM_WORKER_POOLS = 2
 TOTAL_WORKER_NODES = WORKER_NODES_PER_POOL * NUM_WORKER_POOLS
 
@@ -33,7 +31,7 @@ except:
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
-SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts")
+SCRIPTS_DIR = path.join(CURRENT_DIR, "scripts")
 SCRIPT_PATHS = {
     "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
     "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
@@ -48,8 +46,10 @@ for name, script_path in SCRIPT_PATHS.items():
         DEFAULT_SCRIPTS[name] = file.read()
 
 # Node boot setup
-AMI = "ami-0c6175878f7e01e70"  # ray-246-observability-docker-8GB, eu-west-2
-USERDATA = None
+# AMI = "ami-0c6175878f7e01e70"  # ray-246-observability-docker-8GB, eu-west-2
+# USERDATA = None
+AMI = "ami-0fef583e486727263"
+USERDATA = DEFAULT_SCRIPTS["node-setup-userdata"]
 
 # Use a larger head node / observability node instance if number of worker nodes
 # meets or exceeds this threshold
@@ -142,7 +142,7 @@ def main():
         ssh_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file=f"{SCRIPTS_DIR}/private-key",
+            private_key_file="private-key",
             ray_tunnel_specs=tunnels,
         )
         ssh_tunnels.start_tunnels()

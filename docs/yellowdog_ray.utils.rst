@@ -1,8 +1,6 @@
-yellowdog\_ray.utils package
-============================
+yellowdog\_ray.utils Utilities
+==============================
 
-Module contents
----------------
 
 .. automodule:: yellowdog_ray.utils.ray_ssh_tunnels
    :members:

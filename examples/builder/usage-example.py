@@ -19,7 +19,7 @@ TOTAL_WORKER_NODES = NUM_WORKER_POOLS * NODES_PER_WORKER_POOL
 
 # Load the example userdata and task scripts
 CURRENT_DIR = path.dirname(path.abspath(__file__))
-SCRIPTS_DIR = path.join(CURRENT_DIR, "../scripts")
+SCRIPTS_DIR = path.join(CURRENT_DIR, "scripts")
 SCRIPT_PATHS = {
     "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
     "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
@@ -84,7 +84,7 @@ def main():
         raydog_tunnels = RayTunnels(
             ray_head_ip_address=public_ip,
             ssh_user="yd-agent",
-            private_key_file=f"{SCRIPTS_DIR}/private-key",
+            private_key_file="private-key",
         )
         raydog_tunnels.start_tunnels()
         cluster_address = "ray://localhost:10001"

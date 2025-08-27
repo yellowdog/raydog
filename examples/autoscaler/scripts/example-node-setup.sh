@@ -1,5 +1,11 @@
 #!/usr/bin/bash
 
+# Ray node setup example script for Ubuntu nodes.
+
+# Set versions of Python and Ray
+PYTHON_VERSION="3.12.10"
+RAY_VERSION="2.48.0"
+
 set -euo pipefail
 
 echo "Installing the YellowDog agent"
@@ -11,6 +17,8 @@ curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads/main
 YD_AGENT_USER="yd-agent"
 YD_AGENT_HOME="/opt/yellowdog/agent"
 
+################################################################################
+# Optional
 echo "Adding $YD_AGENT_USER to passwordless sudoers"
 
 ADMIN_GRP="sudo"
@@ -19,6 +27,7 @@ echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
         /etc/sudoers.d/020-$YD_AGENT_USER
 
 ################################################################################
+# Replace with your own public key
 echo "Adding public SSH key for $YD_AGENT_USER"
 
 mkdir -p $YD_AGENT_HOME/.ssh
@@ -46,31 +55,18 @@ export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
 source $HOME/.local/bin/env
 
-PYTHON_VERSION="3.12.10"
-echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
+echo "Installing Python v$PYTHON_VERSION; creating/activating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
 uv venv --python $PYTHON_VERSION $VENV
-VIRTUAL_ENV_DISABLE_PROMPT=true
 source $VENV/bin/activate
 
-echo "Installing Ray"
-uv pip install "ray[client]" "ray[default]" sshtunnel yellowdog-sdk redis numpy
+echo "Installing Ray v$RAY_VERSION and RayDog"
+uv pip install "ray[client]==$RAY_VERSION" "ray[default]==$RAY_VERSION" \
+               yellowdog-ray
 
 ################################################################################
 
-echo "Downloading RayDog files"
-
-curl -L -o $YD_AGENT_HOME/raydog.tgz "https://drive.google.com/uc?export=download&id=1MM0OpucCLO8wySHmi_U-YyD9TD8Vt9yz"
-tar -xf $YD_AGENT_HOME/raydog.tgz -C $YD_AGENT_HOME 
-
-echo "Modifying Ray script"
-RAYFILE=$VENV/bin/ray 
-cp $RAYFILE $RAYFILE.bak
-awk '1;/^import sys/{ print "import raydog"}' $RAYFILE.bak > $RAYFILE
-
-echo "Create bashrc to setup the Ray environment"
-echo "export PYTHONPATH=/opt/yellowdog/agent" > $YD_AGENT_HOME/.bashrc
-echo "VIRTUAL_ENV_DISABLE_PROMPT=true" >> $YD_AGENT_HOME/.bashrc
+echo "Create/extend .bashrc to set up the Ray environment"
 echo "source $VENV/bin/activate" >> $YD_AGENT_HOME/.bashrc
 
 ################################################################################
@@ -83,5 +79,4 @@ ufw disable &> /dev/null
 echo "Setting file/directory ownership to $YD_AGENT_USER"
 chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME
 
-
-# Note: the Agent configuration script will restart the Agent
+################################################################################
