@@ -98,6 +98,10 @@ RAY_HEAD_IP_ENV_VAR = "RAY_HEAD_IP"
 PROP_PROVIDER = "provider"
 PROP_AVAILABLE_NODE_TYPES = "available_node_types"
 PROP_AUTH = "auth"
+HEAD_NODE_TASK_NAME = f"{HEAD_NODE_NAME}-task"
+WORKER_NODES_TASK_GROUP_NAME = "worker-nodes"
+WORKER_NODE_TASK_NAME = "worker-node-task"
+EXECUTION_CONTEXT_USERNAME = "yd-agent"
 
 # Shut down nodes immediately, because the Ray autoscaler will
 # already have waited before terminating
@@ -254,8 +258,8 @@ class RayDogNodeProvider(NodeProvider):
         Detect when autoscaler is running under the YellowDog agent.
         """
         # ToDo: there's no hard requirement for this to be the username
-        return (os.environ.get("USER") == "yd-agent") or (
-            os.environ.get("LOGNAME") == "yd-agent"
+        return (os.environ.get("USER") == EXECUTION_CONTEXT_USERNAME) or (
+            os.environ.get("LOGNAME") == EXECUTION_CONTEXT_USERNAME
         )
 
     @staticmethod
@@ -1154,11 +1158,11 @@ class AutoRayDog:
             taskData=ray_start_script,
             arguments=["taskdata.txt"],
             environment={
-                "YD_API_KEY_ID": self._api_key_id,
-                "YD_API_KEY_SECRET": self._api_key_secret,
-                "YD_API_URL": self._api_url,
+                YD_API_KEY_ID_VAR: self._api_key_id,
+                YD_API_KEY_SECRET_VAR: self._api_key_secret,
+                YD_API_URL_VAR: self._api_url,
             },
-            name="head_node_task",
+            name=HEAD_NODE_TASK_NAME,
             outputs=(None if capture_taskoutput is False else self._taskoutput),
         )
 
@@ -1245,7 +1249,7 @@ class AutoRayDog:
             index = len(work_requirement.taskGroups)
             work_requirement.taskGroups.append(
                 TaskGroup(
-                    name=f"worker-nodes-{flavour}-{str(self._worker_task_group_counter).zfill(4)}",
+                    name=f"{WORKER_NODES_TASK_GROUP_NAME}-{flavour}-{str(self._worker_task_group_counter).zfill(4)}",
                     tag=flavour,
                     finishIfAnyTaskFailed=False,
                     finishIfAllTasksFinished=True,
@@ -1267,7 +1271,7 @@ class AutoRayDog:
         # Add tasks to create worker nodes
         new_tasks = [
             Task(
-                name=f"worker-node-task-{str(task_number).zfill(5)}",
+                name=f"{WORKER_NODE_TASK_NAME}-{str(task_number).zfill(5)}",
                 taskType=TASK_TYPE,
                 taskData=ray_start_script,
                 arguments=["taskdata.txt"],
