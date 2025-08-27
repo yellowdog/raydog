@@ -4,7 +4,7 @@ RayDog Autoscaler
 Overview
 --------
 
-The RayDog Autoscaler enables dynamic provisioning and scaling of Ray clusters on the YellowDog platform, leveraging Ray's built-in autoscaling capabilities. Unlike the RayDog Builder, which manually provisions Ray clusters, the autoscaler dynamically adjusts the number of worker nodes based on workload demands, optimizing resource usage and cost. It integrates with YellowDog to create head and worker nodes, manages node metadata via a Redis-based tag store, and supports SSH tunneling for secure communication.
+The RayDog Autoscaler enables dynamic provisioning and scaling of Ray clusters on the YellowDog platform, using Ray's built-in autoscaling capabilities. Unlike the RayDog Builder, which manually controls the provisioning of Ray clusters, the Autoscaler dynamically adjusts the number of worker nodes based on Ray workload demands, optimizing resource usage and cost. It integrates with YellowDog to create head and worker nodes.
 
 This documentation covers the setup, configuration, and usage of the RayDog Autoscaler, intended for users familiar with Ray and YellowDog who want to scale distributed workloads efficiently.
 
@@ -28,11 +28,12 @@ The RayDog Autoscaler integrates with Ray’s CLI to manage clusters. Below are 
 
       ray up raydog.yaml
 
-   This:
-   - Creates a head node using the specified ``compute_requirement_template`` and ``head_start_ray_script``.
-   - Sets up a Redis-based tag store on the head node for tracking node metadata.
-   - Provisions worker nodes as needed, based on Ray’s autoscaling policies (up to ``max_workers``).
-   - Uploads any files listed in ``files_to_upload`` to the head node.
+This:
+
+- Creates a head node using the specified ``compute_requirement_template`` and ``head_start_ray_script``.
+- Sets up a Redis-based tag store on the head node for tracking node metadata.
+- Provisions worker nodes as needed, based on Ray’s autoscaling policies (up to ``max_workers``).
+- Uploads any files listed in ``files_to_upload`` to the head node.
 
 2. **Monitor the Cluster**:
 
@@ -64,7 +65,6 @@ The RayDog Autoscaler integrates with Ray’s CLI to manage clusters. Below are 
 
 .. note::
    - If interrupted (e.g., Ctrl+C during ``ray up``), the autoscaler attempts to clean up YellowDog resources automatically.
-   - Set environment variables (``YD_API_KEY_ID``, ``YD_API_KEY_SECRET``) before running commands, as described in :ref:`raydog-builder`.
 
 Troubleshooting
 ---------------
