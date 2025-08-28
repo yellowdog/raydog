@@ -1306,10 +1306,9 @@ class AutoRayDog:
                 "was shut down"
             )
             return True
-        except:
-            pass
 
-        return False
+        except:
+            return False
 
     def _cancel_work_requirement(self) -> bool:
         """
@@ -1330,7 +1329,6 @@ class AutoRayDog:
                 "was cancelled"
             )
             return True
-        except:
-            pass
 
-        return False
+        except:
+            return False
