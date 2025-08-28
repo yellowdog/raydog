@@ -25,7 +25,7 @@ The Autoscaler requires YellowDog Application credentials to be set in the follo
 
 .. note::
 
-    These credentials are currenly passed as environment variables to the head node in the YellowDog task that starts the Ray processes, so they can be seen in the task detail in the YellowDog portal or via the API.
+    These credentials are currently passed as environment variables to the head node in the YellowDog task that starts the Ray processes, so they can be seen in the task detail in the YellowDog portal or via the API.
 
 If running on a dedicated YellowDog platform, the API URL must also be set:
 
@@ -51,7 +51,7 @@ An example node configuration script to install Valkey on the head node is found
 
 .. note::
 
-    Nodes can be configured dynamically by using base images and supplying configuration scripts to the node configuration via the ``userdata`` and ``extra_userdata`` properties in the configuration file. For production and/or large-scale use, however, we recommend creaing custom VM images with the requirements pre-installed.
+    Nodes can be configured dynamically by using base images and supplying configuration scripts to the node configuration via the ``userdata`` and ``extra_userdata`` properties in the configuration file. For production and/or large-scale use, however, we recommend creating custom VM images with the requirements pre-installed.
 
 Head & Worker Node Task Scripts
 +++++++++++++++++++++++++++++++

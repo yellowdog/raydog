@@ -5,7 +5,7 @@ The RayDog cluster builder uses YellowDog to provision Ray clusters manually.
 
 Worker pools containing configurable numbers of Ray worker nodes of different types can be added and removed dynamically to expand and contract the cluster during its lifetime.
 
-The RayDog Builder can be faster in operation than the Autoscaler, because it will immediately provision worker pools of the requested sizes rather than waiting for Ray job sumbissions to drive the Ray autoscaler into provisioning additional resources. Its limitation is that the match between the resources in the cluster and submitted jobs must be balanced manually, and the cluster must also be downscaled manually.
+The RayDog Builder can be faster in operation than the Autoscaler, because it will immediately provision worker pools of the requested sizes rather than waiting for Ray job submissions to drive the Ray autoscaler into provisioning additional resources. Its limitation is that the match between the resources in the cluster and submitted jobs must be balanced manually, and the cluster must also be downscaled manually.
 
 The Builder is intended for integration in user code.
 
