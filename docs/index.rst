@@ -6,16 +6,16 @@ Welcome to the documentation for YellowDog's integration with Ray: **RayDog**. T
 
 There are two usage models for RayDog:
 
-1. A manual **Builder** library that allows manual control of the scale and node types within the Ray cluster.
+1. A manual **Builder** library that offers manual control of the scale and node types within the Ray cluster.
 
-2. A Ray **Autoscaler** provider, that uses Ray autoscaling to control the scale and node types within the Ray cluster.
+2. A Ray **Autoscaler** provider that uses Ray autoscaling to control the scale and node types within the Ray cluster.
 
 How RayDog Works
 ----------------
 
-RayDog operates by modelling a Ray cluster as a YellowDog work requirement, and provisioning YellowDog worker pools to provide the Ray head node and worker nodes. This model applies both to the Builder and the Autoscaler.
+RayDog operates by modelling a Ray cluster as a YellowDog work requirement, and provisioning YellowDog worker pools to provide the Ray head node and worker nodes. This model applies both to the Builder and to the Autoscaler.
 
-Behind the scenes, RayDog will create work requirements containing task groups and tasks that represent the Ray processes on a head node and a set of worker nodes. Ray will also create worker pools to supply suitable nodes to run the Ray process tasks.
+Behind the scenes, RayDog creates work requirements containing tasks that represent the Ray processes on a head node and multiple sets of worker nodes of varying types. The tasks are organised into task groups that match worker pools, also created by RayDog to supply nodes to run the Ray process tasks.
 
 The lifecycle of the work requirement matches the lifecycle of the Ray cluster. As tasks are added and terminated by RayDog, the relevant worker pools will be scaled up and down by YellowDog.
 

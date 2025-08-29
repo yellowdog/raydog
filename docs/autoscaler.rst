@@ -6,7 +6,7 @@ Overview
 
 The RayDog Autoscaler enables dynamic provisioning and scaling of Ray clusters on the YellowDog platform, using Ray's built-in autoscaling capabilities. Unlike the RayDog Builder, which manually controls the provisioning of Ray clusters, the Autoscaler dynamically adjusts the number of worker nodes based on Ray workload demands, optimizing resource usage and cost.
 
-This documentation covers the setup, configuration, and usage of the RayDog Autoscaler, intended for users familiar with Ray and YellowDog who want to scale distributed workloads efficiently.
+This documentation covers the setup, configuration, and usage of the RayDog Autoscaler, intended for users familiar with Ray and YellowDog.
 
 Configuration
 -------------
@@ -87,4 +87,4 @@ The system used to invoke ``ray`` commands must have Python 3.10+, and the Pytho
 Usage
 -----
 
-The RayDog Autoscaler integrates with Ray’s CLI to manage clusters, so clusters are managed via the usual ``ray`` commands.
+The RayDog Autoscaler integrates with Ray’s CLI to manage clusters, so clusters are controlled via the usual ``ray`` commands.
