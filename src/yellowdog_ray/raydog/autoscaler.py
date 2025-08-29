@@ -243,13 +243,18 @@ class RayDogNodeProvider(NodeProvider):
             if self._auto_raydog.find_raydog_cluster():
                 LOG.debug(f"Found an existing head node")
                 # Get the tags from an existing head node
-                self._tag_store.connect(
-                    self._auto_raydog.head_node_public_ip,
-                    self._tag_store_server_port,
-                    self._auth_config,
-                )
+                try:
+                    self._tag_store.connect(
+                        self._auto_raydog.head_node_public_ip,
+                        self._tag_store_server_port,
+                        self._auth_config,
+                    )
+                except:  # Clean up on connection failure
+                    self._auto_raydog.shut_down()
+                    raise
+
             else:
-                # Ray will create a new head node ... later
+                # Ray will create a new head node later
                 pass
 
     @staticmethod
@@ -454,11 +459,15 @@ class RayDogNodeProvider(NodeProvider):
                 )
 
                 # Sync tag values with the head node
-                self._tag_store.connect(
-                    self.head_node_public_ip,
-                    self._tag_store_server_port,
-                    self._auth_config,
-                )
+                try:
+                    self._tag_store.connect(
+                        self.head_node_public_ip,
+                        self._tag_store_server_port,
+                        self._auth_config,
+                    )
+                except:  # Clean up on connection failure
+                    self._auto_raydog.shut_down()
+                    raise
 
                 # Upload any extra files the head node might need to
                 # implement the autoscaler config file
