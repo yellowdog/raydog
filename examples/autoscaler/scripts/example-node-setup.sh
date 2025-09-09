@@ -4,7 +4,7 @@
 
 # Set versions of Python and Ray
 PYTHON_VERSION="3.12.10"
-RAY_VERSION="2.48.0"
+RAY_VERSION="2.49.1"
 
 set -euo pipefail
 
