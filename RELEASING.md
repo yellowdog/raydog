@@ -2,12 +2,12 @@
 
 When RayDog is ready for release:
 
-1. Ensure all required changes have been committed
-2. Ensure the version number in [src/yellowdog_ray/__init__.py](src/yellowdog_ray/__init__.py) has been updated
+1. Ensure the version number in [src/yellowdog_ray/__init__.py](src/yellowdog_ray/__init__.py) has been updated on the `next-version` branch
+2. Merge all changes to the `main` branch from `next-version`
 3. Tag the repository
-4. Upload the new package version to PyPI
-5. Build the documentation container image and upload to Dockerhub
-
+4. Push the changes and the tags to `origin/main`
+5. Upload the new package version to PyPI
+6. Build the documentation container image and upload to Dockerhub
 
 ## 1. Tag the repository with the new version number
 
