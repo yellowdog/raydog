@@ -12,7 +12,7 @@ from time import sleep
 from typing import Any
 
 import redis
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from ray.autoscaler.command_runner import CommandRunnerInterface
 from ray.autoscaler.node_provider import NodeProvider
 from ray.autoscaler.tags import (
@@ -916,7 +916,7 @@ class AutoRayDog:
 
         # Load extra environment variables from a .env file if it exists;
         # do not override existing variables (environment takes precedence)
-        load_dotenv(verbose=False, override=False)
+        load_dotenv(dotenv_path=find_dotenv(usecwd=True), verbose=False, override=False)
 
         # YellowDog API URL and Application credentials
         self._api_url = os.getenv(YD_API_URL_VAR, YD_DEFAULT_API_URL)

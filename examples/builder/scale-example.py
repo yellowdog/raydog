@@ -67,7 +67,9 @@ def main():
     ssh_tunnels: RayTunnels | None = None
     try:
         # Read any extra environment variables from a file
-        dotenv.load_dotenv(verbose=True, override=True)
+        dotenv.load_dotenv(
+            dotenv_path=dotenv.find_dotenv(usecwd=True), verbose=True, override=True
+        )
 
         # Configure the Ray cluster
         raydog_cluster = RayDogCluster(
