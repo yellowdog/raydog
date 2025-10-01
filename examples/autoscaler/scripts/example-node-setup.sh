@@ -3,8 +3,8 @@
 # Ray node setup example script for Ubuntu nodes.
 
 # Set versions of Python and Ray
-PYTHON_VERSION="3.12.10"
-RAY_VERSION="2.49.1"
+PYTHON_VERSION="3.12.11"
+RAY_VERSION="2.49.2"
 
 set -euo pipefail
 

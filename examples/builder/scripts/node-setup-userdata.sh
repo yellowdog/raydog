@@ -2,6 +2,10 @@
 
 set -eo pipefail
 
+# Set versions of Python and Ray
+PYTHON_VERSION="3.12.11"
+RAY_VERSION="2.49.2"
+
 echo "Installing the YellowDog agent"
 cd /root || exit
 curl -LsSf https://raw.githubusercontent.com/yellowdog/resources/refs/heads\
@@ -45,10 +49,6 @@ echo "Installing 'uv'"
 export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh &> /dev/null
 source $HOME/.local/bin/env
-
-# Set versions to install
-PYTHON_VERSION="3.12.10"
-RAY_VERSION="2.49.1"
 
 echo "Installing Python v$PYTHON_VERSION and creating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
