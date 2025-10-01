@@ -3,6 +3,7 @@
 VALKEY_VERSION=8.1.1
 
 YD_AGENT_HOME="/opt/yellowdog/agent"
+YD_AGENT_USER="yd-agent"
 
 echo "Installing Valkey version $VALKEY_VERSION"
 CPU=$(arch | sed s/aarch64/arm64/)
