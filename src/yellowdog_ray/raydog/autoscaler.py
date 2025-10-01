@@ -49,6 +49,8 @@ from yellowdog_client.model import (
 from yellowdog_client.model.exceptions import InvalidRequestException
 from yellowdog_client.platform_client import PlatformClient
 
+from yellowdog_ray.utils.utils import get_public_ip_from_node
+
 # API URL and Application Key/Secret
 YD_API_URL_VAR = "YD_API_URL"
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
@@ -1070,7 +1072,10 @@ class AutoRayDog:
         yd_node_id: str = self._get_node_id_for_task(task)
         yd_node: Node = self.yd_client.worker_pool_client.get_node_by_id(yd_node_id)
 
-        return yd_node.details.publicIpAddress, yd_node.details.privateIpAddress
+        return (
+            get_public_ip_from_node(self.yd_client, yd_node),
+            yd_node.details.privateIpAddress,
+        )
 
     def shut_down(self) -> None:
         """

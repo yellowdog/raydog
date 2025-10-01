@@ -27,6 +27,8 @@ from yellowdog_client.model import (
 )
 from yellowdog_client.platform_client import PlatformClient
 
+from yellowdog_ray.utils.utils import get_public_ip_from_node
+
 YD_DEFAULT_API_URL = "https://api.yellowdog.ai"
 
 HEAD_NODE_TASK_GROUP_NAME = "head-node"
@@ -557,7 +559,7 @@ class RayDogCluster:
             self.head_node_node_id
         )
         self.head_node_private_ip = node.details.privateIpAddress
-        self.head_node_public_ip = node.details.publicIpAddress
+        self.head_node_public_ip = get_public_ip_from_node(self.yd_client, node)
 
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, worker_node_worker_pool in enumerate(
