@@ -7,3 +7,9 @@ yellowdog\_ray.utils Utilities
    :special-members: __init__
    :show-inheritance:
    :undoc-members:
+
+.. automodule:: yellowdog_ray.utils.utils
+   :members:
+   :special-members: __init__
+   :show-inheritance:
+   :undoc-members:
