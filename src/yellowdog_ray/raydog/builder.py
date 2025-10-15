@@ -637,6 +637,19 @@ class RayDogCluster:
         else:
             self.worker_node_worker_pools.pop(internal_name)
 
+    def get_worker_pool_internal_name_by_id(self, worker_pool_id: str) -> str | None:
+        """
+        Convenience method to get the internal name of a worker pool
+        by its worker pool ID.
+
+        :param worker_pool_id: the worker pool ID .
+        """
+        for name, worker_node_worker_pool in self.worker_node_worker_pools.items():
+            if worker_node_worker_pool.worker_pool_id == worker_pool_id:
+                return name
+
+        return None
+
     @property
     def worker_pool_ids(self) -> list[str]:
         """
