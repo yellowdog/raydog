@@ -581,7 +581,7 @@ class RayDogCluster:
 
     def remove_worker_pool(self, worker_pool_id: str):
         """
-        Terminate the compute requirement associated with a worker pool.
+        Shut down a worker pool and terminate its compute requirement.
 
         :param worker_pool_id: the ID of the worker pool to remove.
         """
@@ -607,6 +607,7 @@ class RayDogCluster:
         worker_pool: ProvisionedWorkerPool = (
             self.yd_client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
         )
+        self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
         self.yd_client.compute_client.terminate_compute_requirement_by_id(
             worker_pool.computeRequirementId
         )
