@@ -671,7 +671,8 @@ class RayDogCluster:
     def shut_down(self):
         """
         Shut down the Ray cluster by cancelling the work requirement, including
-        aborting all its tasks, and shutting down all remaining worker pools.
+        aborting all its tasks, terminating all compute requirements and
+        shutting down all remaining worker pools.
         """
 
         if self._is_shut_down:
@@ -687,26 +688,21 @@ class RayDogCluster:
                     pass  # Suppress exception if it's just a state transition error
             self.work_requirement_id = None
 
-        if self.head_node_worker_pool_id is not None:
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                self.head_node_worker_pool_id
-            )
-            self.head_node_worker_pool_id = None
+        _terminate_compute_requirement_and_shutdown_worker_pool(
+            self.yd_client, self.head_node_worker_pool_id
+        )
+        self.head_node_worker_pool_id = None
 
-        if (
-            self.enable_observability
-            and self.observability_node_worker_pool_id is not None
-        ):
-            self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                self.observability_node_worker_pool_id
+        if self.enable_observability:
+            _terminate_compute_requirement_and_shutdown_worker_pool(
+                self.yd_client, self.observability_node_worker_pool_id
             )
             self.observability_node_worker_pool_id = None
 
         for worker_node_worker_pool in self.worker_node_worker_pools.values():
-            if worker_node_worker_pool.worker_pool_id is not None:
-                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                    worker_node_worker_pool.worker_pool_id
-                )
+            _terminate_compute_requirement_and_shutdown_worker_pool(
+                self.yd_client, worker_node_worker_pool.worker_pool_id
+            )
         self.worker_node_worker_pools = {}
 
         self._is_shut_down = True
@@ -862,8 +858,28 @@ class RayDogClusterProxy:
             worker_pool_ids := self._cluster_state.get(WORKER_POOL_IDS_STR)
         ) is not None:
             for worker_pool_id in worker_pool_ids:
-                self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(
-                    worker_pool_id
+                _terminate_compute_requirement_and_shutdown_worker_pool(
+                    self.yd_client, worker_pool_id
                 )
         else:
             raise Exception("No worker pool IDs specified")
+
+
+def _terminate_compute_requirement_and_shutdown_worker_pool(
+    client: PlatformClient, wp_id: str | None
+):
+    """
+    Helper function to terminate a compute requirement and shut down a
+    worker pool, using the worker pool ID.
+
+    :param client: the PlatformClient to connect to YellowDog.
+    :param wp_id: the worker pool ID
+    """
+    if wp_id is None:
+        return
+
+    worker_pool = client.worker_pool_client.get_worker_pool_by_id(wp_id)
+    client.compute_client.terminate_compute_requirement_by_id(
+        worker_pool.computeRequirementId
+    )
+    client.worker_pool_client.shutdown_worker_pool_by_id(wp_id)
