@@ -1,6 +1,7 @@
 black
 build
 isort
+mypy
 pyupgrade
 setuptools >= 61.0
 sphinx

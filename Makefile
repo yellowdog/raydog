@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := no_op
 
 SRC = src/yellowdog_ray/*.py src/yellowdog_ray/raydog/*.py src/yellowdog_ray/utils/*.py examples/builder/*.py examples/autoscaler/*.py
+STUBS = src/yellowdog_ray/*.pyi src/yellowdog_ray/raydog/*.pyi src/yellowdog_ray/utils/*.pyi
 TESTS =
 BUILD_DIST = build dist src/yellowdog_ray.egg-info
 PYCACHE = __pycache__
@@ -8,11 +9,15 @@ PYCACHE = __pycache__
 VERSION_FILE := src/yellowdog_ray/__init__.py
 VERSION := $(shell grep "__version__ =" $(VERSION_FILE) | sed -E 's/.*"([^"]+)".*/\1/')
 
-build: $(SRC)
+build: $(SRC) stubs
 	python -m build
 
+stubs: $(SRC)
+	rm -f $(STUBS)
+	stubgen -o src src/yellowdog_ray/raydog src/yellowdog_ray/utils
+
 clean:
-	rm -rf $(BUILD_DIST) $(PYCACHE)
+	rm -rf $(BUILD_DIST) $(PYCACHE) $(STUBS)
 	$(MAKE) -C docs clean
 
 install: build
@@ -58,5 +63,5 @@ pypi-prod-upload: clean build
 
 no_op:
 	# Available targets are: build, clean, install, uninstall, format, update, docs,
-	# docs-build-image, docs-publish-image, pypi-check-build,
+	# docs-build-image, docs-publish-image, pypi-check-build, stubs
 	# pypi-test-upload, pypi-prod-upload
