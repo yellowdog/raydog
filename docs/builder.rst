@@ -61,7 +61,7 @@ To use your own Bash task scripts, there are three requirements:
 2. When Ray is started on either the head node or worker nodes, use the ``--block`` option with the ``ray start`` command, to ensure the YellowDog task lifecycle matches that of the Ray processes.
 
 
-3. For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable ``RAY_HEAD_NODE_PRIVATE_IP``. For example, use the command line option ``--address=$RAY_HEAD_NODE_PRIVATE_IP:6379`` when starting the Ray processes.
+3. For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable ``RAY_HEAD_IP``. For example, use the command line option ``--address=$RAY_HEAD_IP:6379`` when starting the Ray processes. (For legacy reasons, the deprecated variable ``RAY_HEAD_NODE_PRIVATE_IP`` is also available to identify the head node.)
 
 Creating SSH Tunnels for the Ray client, dashboard, etc.
 --------------------------------------------------------

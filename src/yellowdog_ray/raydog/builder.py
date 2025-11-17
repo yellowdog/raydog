@@ -758,7 +758,10 @@ class RayDogCluster:
         """
 
         worker_node_worker_pool.task_prototype.environment.update(
-            {"RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip}
+            {
+                "RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip,  # Deprecated
+                "RAY_HEAD_IP": self.head_node_private_ip,
+            }
         )
         if self.enable_observability:
             worker_node_worker_pool.task_prototype.environment.update(
