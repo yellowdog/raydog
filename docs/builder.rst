@@ -124,3 +124,13 @@ Usage Examples
 --------------
 
 Usage examples can be found at: https://github.com/yellowdog/raydog/tree/main/examples/builder
+
+Running Ray in Docker Containers
+--------------------------------
+
+It's possible to run the Ray processes in containers rather than on the host. The task start scripts need to be modified to run the desired container instead of running the Ray processes directly on the host. They must also stop the container on exit. Script examples can be found at:
+
+- https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts/head-node-task-script-docker.sh and
+- https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts/worker-node-task-script-docker.sh
+
+The container image(s) must include the required versions of Python and Ray.

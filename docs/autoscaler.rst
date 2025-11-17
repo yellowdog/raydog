@@ -88,3 +88,10 @@ Usage
 -----
 
 The RayDog Autoscaler integrates with Ray’s CLI to manage clusters, so clusters are controlled via the usual ``ray`` commands.
+
+Running Ray in Docker Containers
+--------------------------------
+
+It's possible to run the Ray processes in containers rather than on the host. The task start scripts need to be modified to run the desired container instead of running the Ray processes directly on the host. They must also stop the container on exit. Script examples can be found within the Ray configuration file at: https://github.com/yellowdog/raydog/tree/main/examples/autoscaler/raydog-docker.yaml.
+
+The container image(s) must include the required versions of Python and Ray, and must also include RayDog and Valkey for the head node container image.
