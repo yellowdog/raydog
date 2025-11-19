@@ -14,7 +14,7 @@ build: $(SRC) stubs
 
 stubs: $(SRC)
 	rm -f $(STUBS)
-	stubgen -o src src/yellowdog_ray/raydog src/yellowdog_ray/utils
+	stubgen -o src src/yellowdog_ray/raydog src/yellowdog_ray/utils --include-private
 
 clean:
 	rm -rf $(BUILD_DIST) $(PYCACHE) $(STUBS)
