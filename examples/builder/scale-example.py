@@ -88,7 +88,6 @@ def main():
             observability_node_images_id=AMI,
             observability_node_metrics_enabled=True,
             observability_node_userdata=USERDATA,
-            observability_node_capture_taskoutput=True,
             observability_node_start_script=DEFAULT_SCRIPTS[
                 "observability-node-task-script"
             ],

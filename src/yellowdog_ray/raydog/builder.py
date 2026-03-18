@@ -76,7 +76,6 @@ class RayDogCluster:
         head_node_userdata: str | None = None,
         head_node_instance_tags: dict[str, str] | None = None,
         head_node_metrics_enabled: bool | None = None,
-        head_node_capture_taskoutput: bool = False,
         enable_observability: bool = False,
         observability_node_compute_requirement_template_id: str | None = None,
         observability_node_instance_tags: dict[str, str] | None = None,
@@ -84,7 +83,6 @@ class RayDogCluster:
         observability_node_userdata: str | None = None,
         observability_node_metrics_enabled: bool | None = None,
         observability_node_start_script: str | None = None,
-        observability_node_capture_taskoutput: bool = False,
         cluster_lifetime: timedelta | None = None,
     ):
         """
@@ -113,8 +111,6 @@ class RayDogCluster:
             instance.
         :param head_node_metrics_enabled: whether to enable metrics collection for the
             head node.
-        :param head_node_capture_taskoutput: whether to capture the console output of the
-            head node task.
         :param enable_observability: whether to enable observability node support
         :param observability_node_compute_requirement_template_id: the compute requirement
             template to use for the observability node.
@@ -128,8 +124,6 @@ class RayDogCluster:
             the observability node.
         :param observability_node_start_script: the Bash script for starting the observability
             node processes.
-        :param observability_node_capture_taskoutput: whether to capture the console output
-            of the observability node task.
         :param cluster_lifetime: an optional timeout that will shut down the Ray
             cluster if it expires.
         """
@@ -181,7 +175,6 @@ class RayDogCluster:
             taskData=head_node_ray_start_script,
             arguments=["taskdata.txt"],
             environment={},
-            outputs=None if head_node_capture_taskoutput is False else self._taskoutput,
         )
 
         self._work_requirement = WorkRequirement(
@@ -271,11 +264,6 @@ class RayDogCluster:
             taskType=TASK_TYPE,
             taskData=observability_node_start_script,
             arguments=["taskdata.txt"],
-            outputs=(
-                None
-                if observability_node_capture_taskoutput is False
-                else self._taskoutput
-            ),
         )
 
         # Properties publicly available for reading
@@ -295,7 +283,6 @@ class RayDogCluster:
         worker_node_userdata: str | None = None,
         worker_node_instance_tags: dict[str, str] | None = None,
         worker_node_metrics_enabled: bool | None = None,
-        worker_node_capture_taskoutput: bool = False,
     ) -> str | None:
         """
         Add a worker pool and task group that will provide Ray worker nodes.
@@ -317,8 +304,6 @@ class RayDogCluster:
             worker node instances.
         :param worker_node_metrics_enabled: whether to enable metrics collection for the
             worker nodes.
-        :param worker_node_capture_taskoutput: whether to capture the console output of the
-            worker node tasks.
         :return: returns the worker pool ID if a worker pool was created, or None if the
             pool will be created later using the build() method.
         """
@@ -372,11 +357,6 @@ class RayDogCluster:
                 taskData=worker_node_task_script,
                 arguments=["taskdata.txt"],
                 environment={},
-                outputs=(
-                    None
-                    if worker_node_capture_taskoutput is False
-                    else self._taskoutput
-                ),
             ),
         )
 
