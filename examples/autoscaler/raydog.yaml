@@ -75,8 +75,6 @@ provider:
 # - 'userdata' and 'extra_userdata' are concatenated, and can be supplied inline
 #   or by using the "file: <pathname>" syntax
 # - 'metrics_enabled' enables node metric display
-# - 'capture_taskoutput' uploads the task script console output to the YellowDog
-#   object store
 
 available_node_types:
   ray_head_default:
@@ -87,7 +85,6 @@ available_node_types:
       userdata: "file:scripts/example-node-setup.sh"
       extra_userdata: "file:scripts/install-valkey.sh"
       metrics_enabled: true
-      capture_taskoutput: false
 
   ray_worker_small:
     resources: { "CPU": 1 }
@@ -98,7 +95,6 @@ available_node_types:
       images_id: "ami-0c6175878f7e01e70"
       userdata: "file:scripts/example-node-setup.sh"
       metrics_enabled: true
-      capture_taskoutput: false
 
   # Additional node types may be defined below ...
 

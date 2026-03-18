@@ -76,7 +76,6 @@ PROP_CRT = "compute_requirement_template"
 PROP_IMAGES_ID = "images_id"
 PROP_USERDATA = "userdata"
 PROP_EXTRA_USERDATA = "extra_userdata"
-PROP_CAPTURE_TASKOUTPUT = "capture_taskoutput"
 PROP_METRICS_ENABLED = "metrics_enabled"
 
 # Tag and value names
@@ -451,7 +450,6 @@ class RayDogNodeProvider(NodeProvider):
                     ray_start_script=self._get_script_from_provider_config(
                         PROP_RAY_HEAD_NODE_TASK_SCRIPT
                     ),
-                    capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
                 )
 
                 # Initialise tags & remember the IP addresses
@@ -494,7 +492,6 @@ class RayDogNodeProvider(NodeProvider):
                         PROP_RAY_WORKER_NODE_TASK_SCRIPT
                     ),
                     count=count,
-                    capture_taskoutput=node_config.get(PROP_CAPTURE_TASKOUTPUT, False),
                 )
 
                 # Initialise tags
@@ -828,9 +825,6 @@ class AutoRayDog:
         # captured.
         self._worker_task_counter = 1
 
-        # For use when 'capture_taskoutput' is specified
-        self._taskoutput = [TaskOutput.from_task_process()]
-
     def has_worker_pool(self, flavour: str) -> bool:
         """
         Is there an existing worker pool for this type of node?
@@ -1127,9 +1121,7 @@ class AutoRayDog:
         """
         return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
 
-    def create_head_node_task(
-        self, flavour: str, ray_start_script: str, capture_taskoutput: bool = False
-    ) -> str:
+    def create_head_node_task(self, flavour: str, ray_start_script: str) -> str:
         """
         Create the head node task for the cluster.
         """
@@ -1177,7 +1169,6 @@ class AutoRayDog:
                 YD_API_URL_VAR: self._api_url,
             },
             name=HEAD_NODE_TASK_NAME,
-            outputs=(None if capture_taskoutput is False else self._taskoutput),
         )
 
         try:
@@ -1229,7 +1220,6 @@ class AutoRayDog:
         flavour: str,
         ray_start_script: str,
         count: int,
-        capture_taskoutput: bool = False,
     ) -> list[str]:
         """
         Create the worker node tasks for a given worker pool.
@@ -1290,7 +1280,6 @@ class AutoRayDog:
                 taskData=ray_start_script,
                 arguments=["taskdata.txt"],
                 environment={RAY_HEAD_IP_ENV_VAR: self.head_node_private_ip},
-                outputs=(None if capture_taskoutput is False else self._taskoutput),
             )
             for task_number in range(
                 self._worker_task_counter, self._worker_task_counter + count
