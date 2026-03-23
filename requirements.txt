@@ -1,7 +1,7 @@
-paramiko <= 3.5.1
+paramiko == 3.5.1
 python-dotenv
 ray[client]
 redis
 requests
 sshtunnel
-yellowdog-sdk >= 13.3.0
+yellowdog-sdk >= 13.6.1
