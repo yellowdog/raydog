@@ -23,7 +23,7 @@ The ``yellowdog_ray.raydog.builder`` module defines a ``RayDogCluster`` class.
 3. The ``build()`` method creates the cluster, and returns the private and (if applicable) public IP addresses of the head node. It also provisions any worker pools defined by the ``add_worker_pool()`` method prior to ``build()`` being invoked. The method blocks until the head node is running. After it returns, Ray worker nodes will still be in the process of configuring and joining the cluster. A timeout can be set that cancels cluster creation if exceeded while the head node is still being configured.
 
 
-4. The ``remove_worker_pool()`` method will remove a Ray worker node worker pool by its ID. This causes the compute requirement associated with the worker pool to be terminated immediately, and the worker node tasks running on the nodes will fail (this is by design). The nodes should be gracefully removed from the Ray cluster, which will remain operational with a reduced node count.
+4. The ``remove_worker_pool()`` method will remove a Ray worker node worker pool by its ID, or ``remove_worker_pool_by_internal_name()`` can be used instead if a ``worker_pool_internal_name`` was supplied when the pool was created. This causes the compute requirement associated with the worker pool to be terminated immediately, and the worker node tasks running on the nodes will fail (this is by design). The nodes should be gracefully removed from the Ray cluster, which will remain operational with a reduced node count.
 
 
 5. The ``shut_down()`` method shuts down the Ray cluster by cancelling its associated work requirement, aborting all the tasks representing the head node and worker nodes, and shutting down all worker pools. The cancellation of the work requirement is by design.
@@ -66,7 +66,7 @@ To use your own Bash task scripts, there are three requirements:
 Creating SSH Tunnels for the Ray client, dashboard, etc.
 --------------------------------------------------------
 
-The utility class ``RayTunnels`` in module ``yellowdog_ray.utils.ray_ssh_tunnels`` allows SSH tunnels to be created using a local private key to SSH to the public IP of the Ray head node. The class is also used for establishing the required tunnels if observability is used. The client, etc., can then be accessed using, e.g., ``localhost:10001``.
+The utility class ``RayTunnels`` in module ``yellowdog_ray.utils.ray_ssh_tunnels`` allows SSH tunnels to be created using a local private key to SSH to the public IP of the Ray head node. The client, etc., can then be accessed using, e.g., ``localhost:10001``.
 
 By default, tunnels are set up for the client on port ``10001``, and the Ray dashboard on port ``8265``.
 

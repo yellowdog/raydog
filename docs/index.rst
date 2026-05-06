@@ -32,8 +32,8 @@ RayDog requires Python 3.10 or later.
 
 The RayDog ``yellowdog-ray`` package includes both the Builder and Autoscaler variants.
 
-YellowDog Prequisites
----------------------
+YellowDog Prerequisites
+-----------------------
 
 Use of RayDog requires a YellowDog account populated with cloud provider credentials, one or more compute source templates, one or more compute requirement templates, and an application key/secret with the permissions to create and manage worker pools and work requirements.
 

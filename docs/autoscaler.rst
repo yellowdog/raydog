@@ -13,7 +13,13 @@ Configuration
 
 The RayDog Autoscaler uses a YAML configuration file to define the cluster’s properties. The configuration is passed to Ray’s autoscaler via the ``ray up`` and ``ray down`` commands.
 
-A documented example of a Ray configuration file is found at: https://github.com/yellowdog/raydog/tree/main/examples/autoscaler/raydog.yaml. Please take a look at the documentation in the example to explore the possible configuration options.
+A documented example of a Ray configuration file is found at: https://github.com/yellowdog/raydog/tree/main/examples/autoscaler/raydog.yaml. The example file documents all available configuration options inline.
+
+.. note::
+
+    The standard Ray node-initialisation properties (``initialization_commands``, ``setup_commands``, ``head_setup_commands``, ``worker_setup_commands``, ``head_start_ray_commands``, ``worker_start_ray_commands``) must be left **empty** when using the RayDog autoscaler. All node setup should be performed via ``userdata``/``extra_userdata``, and all Ray process initialisation via the ``ray_head_node_task_script`` and ``ray_worker_node_task_script`` provider properties.
+
+Script values in the provider and node type configuration can be supplied inline or by referencing a file using the ``file: <path>`` syntax, e.g. ``userdata: "file:scripts/setup.sh"``. Files referenced this way are automatically uploaded from local storage to the head node.
 
 YellowDog Credentials
 +++++++++++++++++++++
@@ -87,7 +93,13 @@ The system used to invoke ``ray`` commands must have Python 3.10+, and the Pytho
 Usage
 -----
 
-The RayDog Autoscaler integrates with Ray’s CLI to manage clusters, so clusters are controlled via the usual ``ray`` commands.
+The RayDog Autoscaler integrates with Ray’s CLI. Clusters are managed with the following commands, passing your YAML configuration file::
+
+    ray up raydog.yaml       # Create or update the cluster
+    ray down raydog.yaml     # Tear down the cluster
+    ray status raydog.yaml   # Show current cluster status
+    ray attach raydog.yaml   # SSH to the head node
+    ray submit raydog.yaml script.py  # Submit a job to the cluster
 
 Running Ray in Docker Containers
 --------------------------------
