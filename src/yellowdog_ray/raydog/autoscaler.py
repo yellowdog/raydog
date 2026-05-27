@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from time import sleep
-from typing import Any
+from typing import Any, cast
 
 import redis
 from dotenv import find_dotenv, load_dotenv
@@ -35,7 +35,6 @@ from yellowdog_client.model import (
     Task,
     TaskGroup,
     TaskGroupStatus,
-    TaskOutput,
     TaskSearch,
     TaskStatus,
     WorkerPool,
@@ -204,13 +203,13 @@ class RayDogNodeProvider(NodeProvider):
         self._tag_store_server_port = provider_config.get(
             PROP_TAG_SERVER_PORT, TAG_SERVER_PORT_DEFAULT
         )
-        self._cmd_runner = None
-        self._scripts = {}
+        self._cmd_runner: CommandRunnerInterface | None = None
+        self._scripts: dict[str, str] = {}
 
         self._files_to_upload = set(provider_config.get(PROP_FILES_TO_UPLOAD, []))
 
-        self.head_node_public_ip = None
-        self.head_node_private_ip = None
+        self.head_node_public_ip: str | None = None
+        self.head_node_private_ip: str | None = None
 
         # Work out whether this is the head node (i.e., autoscaling config
         # provided & running as the YD agent)
@@ -270,7 +269,7 @@ class RayDogNodeProvider(NodeProvider):
 
     @staticmethod
     def _find_file_references(
-        config: Any, files: set[str] = None, basepath: str = None
+        config: Any, files: set[str] | None = None, basepath: str | None = None
     ) -> set[str]:
         """
         Recursively find all unique file paths referenced with 'file:'
@@ -503,6 +502,8 @@ class RayDogNodeProvider(NodeProvider):
             self._auto_raydog.shut_down()
             raise
 
+        return None
+
     def create_node_with_resources_and_labels(
         self,
         node_config: dict[str, Any],
@@ -577,6 +578,7 @@ class RayDogNodeProvider(NodeProvider):
         assert self._auth_config
 
         if not self._cmd_runner:
+            assert self._auto_raydog.head_node_task_id is not None
             self._cmd_runner = self.get_command_runner(
                 "Head Node",
                 self._auto_raydog.head_node_task_id,
@@ -585,6 +587,7 @@ class RayDogNodeProvider(NodeProvider):
                 subprocess,
                 False,
             )
+        assert self._cmd_runner is not None
         return self._cmd_runner
 
     def _get_script_from_provider_config(self, property_name: str) -> str:
@@ -647,13 +650,10 @@ class TagStore:
         self, longlist: list[str] | None, tag_name: str, tag_value: str
     ) -> list[str]:
         if longlist is None:
-            longlist = self._tags.keys()
-        shortlist = list(
-            filter(
-                lambda x: tag_value == self._tags.get(x, {}).get(tag_name, ""), longlist
-            )
-        )
-        return shortlist
+            longlist = list(self._tags.keys())
+        return [
+            x for x in longlist if tag_value == self._tags.get(x, {}).get(tag_name, "")
+        ]
 
     def _update_tags(self, node_id: str, new_tags: dict[str, str]) -> None:
         assert node_id.startswith("ydid:task:")
@@ -676,7 +676,10 @@ class TagStore:
             return None
 
     def connect(
-        self, remote_server: str | None, port: int, auth_config: dict[str, str] = None
+        self,
+        remote_server: str | None,
+        port: int,
+        auth_config: dict[str, str] | None = None,
     ) -> None:
         """
         Connect to the Redis tag server on the head node.
@@ -688,6 +691,7 @@ class TagStore:
 
         # setup an SSH tunnel, if required
         if remote_server is not None:
+            assert auth_config is not None
             LOG.debug(f"Setting up SSH tunnel to tag server on {remote_server}")
             tunnel = SSHTunnelForwarder(
                 remote_server,
@@ -727,18 +731,23 @@ class TagStore:
         if self._redis:
             prefix = f"{self._cluster_name}:"
 
-            cur, redis_keys = self._redis.scan(cursor=0, match=prefix + "*")
+            cur, redis_keys = cast(
+                tuple[int, list[str]], self._redis.scan(cursor=0, match=prefix + "*")
+            )
             while True:
                 for key in redis_keys:
                     node_id = key.removeprefix(prefix)
-                    tags = self._redis.hgetall(key)
+                    tags = cast(dict[str, str], self._redis.hgetall(key))
 
                     # logger.debug(f"Tags for {node_id} {tags}")
                     self._update_tags(node_id, tags)
 
                 if not cur:
                     break
-                cur, redis_keys = self._redis.scan(cursor=cur, match=prefix + "*")
+                cur, redis_keys = cast(
+                    tuple[int, list[str]],
+                    self._redis.scan(cursor=cur, match=prefix + "*"),
+                )
 
     def _writeback(self, node_id: str, tags: dict[str, str]) -> None:
         """
@@ -773,7 +782,7 @@ class AutoRayDog:
         self._tag_store: TagStore = tag_store
 
         # Store the worker pool IDs for each node flavour
-        self._worker_pools = {}
+        self._worker_pools: dict[str, str] = {}
 
         # Store the work requirement ID for this cluster
         self._work_requirement_id: str | None = None
@@ -900,6 +909,7 @@ class AutoRayDog:
                 self._shutdown_head_node_worker_pool()
             raise
 
+        assert worker_pool.id is not None
         self._worker_pools[flavour] = worker_pool.id
 
     def _get_yd_client(self) -> PlatformClient:
@@ -945,9 +955,10 @@ class AutoRayDog:
         )
 
         work_req_id: str | None = None
-        work_req: WorkRequirement
         for work_req in candidates.iterate():
-            if work_req.name.startswith(self._cluster_name):
+            if work_req.name is not None and work_req.name.startswith(
+                self._cluster_name
+            ):
                 work_req_id = work_req.id
                 break
 
@@ -959,22 +970,25 @@ class AutoRayDog:
         self._work_requirement_id = work_req_id
         work_requirement = self._get_work_requirement()
 
-        self._is_shut_down: bool = (
-            work_requirement.status != WorkRequirementStatus.RUNNING
-        )
+        self._is_shut_down = work_requirement.status != WorkRequirementStatus.RUNNING
 
-        self._uniqueid: str = work_requirement.name[-8:]
-        self._cluster_name: str = work_requirement.name[:-9]
-        self._cluster_tag: str = work_requirement.tag
+        self._uniqueid = work_requirement.name[-8:]
+        self._cluster_name = work_requirement.name[:-9]
+        self._cluster_tag = work_requirement.tag or ""
 
         # Task group for the head node
         try:
+            assert work_requirement.taskGroups is not None
             head_task_group: TaskGroup = work_requirement.taskGroups[0]
-            self._cluster_lifetime = head_task_group.runSpecification.taskTimeout
+            if head_task_group.runSpecification.taskTimeout is not None:
+                self._cluster_lifetime = head_task_group.runSpecification.taskTimeout
 
+            head_task_group_id = head_task_group.id
+            assert head_task_group_id is not None
             head_task: Task = self._get_tasks_in_task_group(
-                head_task_group.id
+                head_task_group_id
             ).list_all()[0]
+            assert head_task.id is not None
             self.head_node_task_id = head_task.id
 
         except IndexError:
@@ -1005,8 +1019,11 @@ class AutoRayDog:
         worker_pool_prefix = f"{self._cluster_name}-{self._uniqueid}-"
         for worker_pool in worker_pools.iterate():
             # ToDo: Should check the worker pool is in a usable state
-            if worker_pool.name.startswith(worker_pool_prefix):
+            if worker_pool.name is not None and worker_pool.name.startswith(
+                worker_pool_prefix
+            ):
                 flavour = worker_pool.name.removeprefix(worker_pool_prefix)
+                assert worker_pool.id is not None
                 self._worker_pools[flavour] = worker_pool.id
 
         # Get the node details for the head node
@@ -1020,6 +1037,7 @@ class AutoRayDog:
         """
         Get the latest state of the YellowDog work requirement for this cluster.
         """
+        assert self._work_requirement_id is not None
         return self.yd_client.work_client.get_work_requirement_by_id(
             self._work_requirement_id
         )
@@ -1066,10 +1084,11 @@ class AutoRayDog:
         yd_node_id: str = self._get_node_id_for_task(task)
         yd_node: Node = self.yd_client.worker_pool_client.get_node_by_id(yd_node_id)
 
-        return (
-            get_public_ip_from_node(self.yd_client, yd_node),
-            yd_node.details.privateIpAddress,
-        )
+        public_ip = get_public_ip_from_node(self.yd_client, yd_node)
+        assert public_ip is not None
+        assert yd_node.details is not None
+        assert yd_node.details.privateIpAddress is not None
+        return (public_ip, yd_node.details.privateIpAddress)
 
     def shut_down(self) -> None:
         """
@@ -1119,7 +1138,12 @@ class AutoRayDog:
         """
         Get the YellowDog ID for the node running a particular task.
         """
-        return self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
+        assert task.workerId is not None
+        node_id = self.yd_client.worker_pool_client.get_node_by_worker_id(
+            task.workerId
+        ).id
+        assert node_id is not None
+        return node_id
 
     def create_head_node_task(self, flavour: str, ray_start_script: str) -> str:
         """
@@ -1146,7 +1170,6 @@ class AutoRayDog:
                             taskTypes=[TASK_TYPE],
                             workerTags=[f"{flavour}_{self._uniqueid}"],
                             namespaces=[self._namespace],
-                            exclusiveWorkers=True,
                             taskTimeout=self._cluster_lifetime,
                         ),
                     )
@@ -1159,6 +1182,8 @@ class AutoRayDog:
             self._work_requirement_id = work_requirement.id
 
         # Create a task to run the head node
+        assert self._api_key_id is not None
+        assert self._api_key_secret is not None
         head_node_task = Task(
             taskType=TASK_TYPE,
             taskData=ray_start_script,
@@ -1171,21 +1196,26 @@ class AutoRayDog:
             name=HEAD_NODE_TASK_NAME,
         )
 
+        assert work_requirement.taskGroups is not None
+        head_task_group_id = work_requirement.taskGroups[0].id
+        assert head_task_group_id is not None
         try:
             self.head_node_task_id = (
                 self.yd_client.work_client.add_tasks_to_task_group_by_id(
-                    work_requirement.taskGroups[0].id, [head_node_task]
+                    head_task_group_id, [head_node_task]
                 )[0].id
             )
         except (InvalidRequestException, IndexError):
             # This probably means there's a lingering work requirement
             # from a previous failed invocation of 'run'; cancel it
             LOG.warning(f"Cancelling work requirement '{work_requirement.id}'")
+            assert work_requirement.id is not None
             self.yd_client.work_client.cancel_work_requirement_by_id(
                 work_requirement.id
             )
             raise
 
+        assert self.head_node_task_id is not None
         # Wait for the head node to start
         while True:
             head_task = self.yd_client.work_client.get_task_by_id(
@@ -1213,6 +1243,7 @@ class AutoRayDog:
 
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL.total_seconds())
 
+        assert head_task.id is not None
         return head_task.id
 
     def create_worker_node_tasks(
@@ -1231,11 +1262,8 @@ class AutoRayDog:
             raise Exception(f"No worker pool found for flavour '{flavour}'")
 
         # Get the latest state of the work requirement from YellowDog
-        work_requirement: WorkRequirement = (
-            self.yd_client.work_client.get_work_requirement_by_id(
-                self._work_requirement_id
-            )
-        )
+        work_requirement: WorkRequirement = self._get_work_requirement()
+        assert work_requirement.taskGroups is not None
 
         # Look for a task group for this node flavour in a
         # suitable state to have worker node tasks added
@@ -1261,7 +1289,6 @@ class AutoRayDog:
                         taskTypes=[TASK_TYPE],
                         workerTags=[f"{flavour}_{self._uniqueid}"],
                         namespaces=[self._namespace],
-                        exclusiveWorkers=True,
                         taskTimeout=self._cluster_lifetime,
                     ),
                 )
@@ -1270,8 +1297,10 @@ class AutoRayDog:
             work_requirement = self.yd_client.work_client.update_work_requirement(
                 work_requirement
             )
+            assert work_requirement.taskGroups is not None
             task_group = work_requirement.taskGroups[index]
 
+        assert self.head_node_private_ip is not None
         # Add tasks to create worker nodes
         new_tasks = [
             Task(
@@ -1287,13 +1316,18 @@ class AutoRayDog:
         ]
         self._worker_task_counter += count
 
+        assert task_group.id is not None
         new_tasks = self.yd_client.work_client.add_tasks_to_task_group_by_id(
             task_group.id,
             new_tasks,
         )
 
         # Return a list of node ids
-        return [task.id for task in new_tasks]
+        node_ids: list[str] = []
+        for task in new_tasks:
+            assert task.id is not None
+            node_ids.append(task.id)
+        return node_ids
 
     def _shutdown_head_node_worker_pool(self) -> bool:
         """
@@ -1303,6 +1337,7 @@ class AutoRayDog:
             worker_pool_id = self.yd_client.worker_pool_client.get_worker_pool_by_name(
                 namespace=self._namespace, name=self._head_node_worker_pool_name
             ).id
+            assert worker_pool_id is not None
             self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
             LOG.info(
                 f"Worker pool '{self._namespace}/{self._head_node_worker_pool_name}' "
@@ -1324,6 +1359,7 @@ class AutoRayDog:
                     work_requirement_name=self._work_requirement_name,
                 ).id
             )
+            assert work_requirement_id is not None
             self.yd_client.work_client.cancel_work_requirement_by_id(
                 work_requirement_id, abort=True
             )

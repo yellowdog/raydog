@@ -21,7 +21,6 @@ from yellowdog_client.model import (
     ServicesSchema,
     Task,
     TaskGroup,
-    TaskOutput,
     TaskStatus,
     WorkRequirement,
 )
@@ -142,8 +141,6 @@ class RayDogCluster:
             timeout=IDLE_NODE_AND_POOL_SHUTDOWN_TIMEOUT,
         )
 
-        self._taskoutput = [TaskOutput.from_task_process()]
-
         self._head_node_compute_requirement_template_usage = (
             ComputeRequirementTemplateUsage(
                 templateId=head_node_compute_requirement_template_id,
@@ -189,7 +186,6 @@ class RayDogCluster:
                         taskTypes=[TASK_TYPE],
                         workerTags=[head_node_naming],
                         namespaces=[cluster_namespace],
-                        exclusiveWorkers=True,
                         taskTimeout=cluster_lifetime,
                     ),
                 ),
@@ -218,6 +214,12 @@ class RayDogCluster:
         if not self.enable_observability:
             return
 
+        if observability_node_compute_requirement_template_id is None:
+            raise ValueError(
+                "observability_node_compute_requirement_template_id is required "
+                "when enable_observability is True"
+            )
+
         observability_node_naming = f"{cluster_name}-observability-00"
 
         self._observability_node_compute_requirement_template_usage = (
@@ -245,6 +247,7 @@ class RayDogCluster:
             )
         )
 
+        assert self._work_requirement.taskGroups is not None
         self._work_requirement.taskGroups.append(
             TaskGroup(
                 name=OBSERVABILITY_NODE_TASK_GROUP_NAME,
@@ -253,7 +256,6 @@ class RayDogCluster:
                     taskTypes=[TASK_TYPE],
                     workerTags=[observability_node_naming],
                     namespaces=[cluster_namespace],
-                    exclusiveWorkers=True,
                     taskTimeout=cluster_lifetime,
                 ),
             )
@@ -270,7 +272,6 @@ class RayDogCluster:
         self.observability_node_id: str | None = None
         self.observability_node_private_ip: str | None = None
         self.observability_node_worker_pool_id: str | None = None
-        self.observability_node_private_ip: str | None = None
         self.observability_node_task_id: str | None = None
 
     def add_worker_pool(
@@ -348,7 +349,6 @@ class RayDogCluster:
                     taskTypes=[TASK_TYPE],
                     workerTags=[worker_pool_name],
                     namespaces=[self._cluster_namespace],
-                    exclusiveWorkers=True,
                     taskTimeout=self._cluster_lifetime,
                 ),
             ),
@@ -384,19 +384,22 @@ class RayDogCluster:
         )
 
         # Add the new task group
+        assert self.work_requirement_id is not None
         work_requirement = self.yd_client.work_client.get_work_requirement_by_id(
             self.work_requirement_id
         )
+        assert work_requirement.taskGroups is not None
         work_requirement.taskGroups.append(worker_node_worker_pool.task_group)
         work_requirement = self.yd_client.work_client.update_work_requirement(
             work_requirement
         )
+        assert work_requirement.taskGroups is not None
 
         # Add the worker node tasks to the task group
+        new_task_group_id = work_requirement.taskGroups[-1].id
+        assert new_task_group_id is not None
         self._add_tasks_to_task_group(
-            task_group_id=work_requirement.taskGroups[
-                len(work_requirement.taskGroups) - 1
-            ].id,
+            task_group_id=new_task_group_id,
             worker_node_worker_pool=worker_node_worker_pool,
         )
 
@@ -444,6 +447,7 @@ class RayDogCluster:
 
         # Add currently defined worker node task groups to the work requirement,
         # and submit it
+        assert self._work_requirement.taskGroups is not None
         self._work_requirement.taskGroups += [
             worker_node_worker_pool.task_group
             for worker_node_worker_pool in self.worker_node_worker_pools.values()
@@ -451,6 +455,7 @@ class RayDogCluster:
         self._work_requirement = self.yd_client.work_client.add_work_requirement(
             self._work_requirement
         )
+        assert self._work_requirement.taskGroups is not None
         self.work_requirement_id = self._work_requirement.id
 
         if self.enable_observability:
@@ -460,12 +465,15 @@ class RayDogCluster:
                     self._observability_node_provisioned_worker_pool_properties,
                 ).id
             )
+            observability_task_group_id = self._work_requirement.taskGroups[1].id
+            assert observability_task_group_id is not None
             self.observability_node_task_id = (
                 self.yd_client.work_client.add_tasks_to_task_group_by_id(
-                    self._work_requirement.taskGroups[1].id,
+                    observability_task_group_id,
                     [self._observability_node_task],
                 )[0].id
             )
+            assert self.observability_node_task_id is not None
             while True:
                 observability_task = self.yd_client.work_client.get_task_by_id(
                     self.observability_node_task_id
@@ -482,28 +490,36 @@ class RayDogCluster:
                         "Timeout waiting for observability node task to enter EXECUTING state"
                     )
 
+            assert observability_task.workerId is not None
             self.observability_node_id = (
                 self.yd_client.worker_pool_client.get_node_by_worker_id(
                     observability_task.workerId
                 ).id
             )
+            assert self.observability_node_id is not None
             observability_node: Node = self.yd_client.worker_pool_client.get_node_by_id(
                 self.observability_node_id
             )
+            assert observability_node.details is not None
             self.observability_node_private_ip = (
                 observability_node.details.privateIpAddress
             )
+            assert self.observability_node_private_ip is not None
+            assert self._head_node_task.environment is not None
             self._head_node_task.environment.update(
                 {"OBSERVABILITY_HOST": self.observability_node_private_ip}
             )
 
         # Add the head node task to the first task group
+        head_task_group_id = self._work_requirement.taskGroups[0].id
+        assert head_task_group_id is not None
         self.head_node_task_id = (
             self.yd_client.work_client.add_tasks_to_task_group_by_id(
-                self._work_requirement.taskGroups[0].id,
+                head_task_group_id,
                 [self._head_node_task],
             )[0].id
         )
+        assert self.head_node_task_id is not None
 
         while True:  # Check for execution of the head node task
             task = self.yd_client.work_client.get_task_by_id(self.head_node_task_id)
@@ -532,27 +548,32 @@ class RayDogCluster:
             sleep(HEAD_NODE_TASK_POLLING_INTERVAL.seconds)
 
         # Set the head node ID and get the node details
+        assert task.workerId is not None
         self.head_node_node_id = (
             self.yd_client.worker_pool_client.get_node_by_worker_id(task.workerId).id
         )
+        assert self.head_node_node_id is not None
         node: Node = self.yd_client.worker_pool_client.get_node_by_id(
             self.head_node_node_id
         )
+        assert node.details is not None
         self.head_node_private_ip = node.details.privateIpAddress
+        assert self.head_node_private_ip is not None
         self.head_node_public_ip = get_public_ip_from_node(self.yd_client, node)
 
         # Add worker node tasks to their task groups, one task per worker node
         for task_group_index, worker_node_worker_pool in enumerate(
             self.worker_node_worker_pools.values()
         ):
+            tg_index = (
+                task_group_index + 1
+                if self.enable_observability is False
+                else task_group_index + 2
+            )
+            worker_task_group_id = self._work_requirement.taskGroups[tg_index].id
+            assert worker_task_group_id is not None
             self._add_tasks_to_task_group(
-                task_group_id=self._work_requirement.taskGroups[
-                    (
-                        task_group_index + 1
-                        if self.enable_observability is False
-                        else task_group_index + 2
-                    )
-                ].id,
+                task_group_id=worker_task_group_id,
                 worker_node_worker_pool=worker_node_worker_pool,
             )
 
@@ -584,9 +605,11 @@ class RayDogCluster:
                 "in current list of worker node worker pools"
             )
 
-        worker_pool: ProvisionedWorkerPool = (
-            self.yd_client.worker_pool_client.get_worker_pool_by_id(worker_pool_id)
+        worker_pool = self.yd_client.worker_pool_client.get_worker_pool_by_id(
+            worker_pool_id
         )
+        assert isinstance(worker_pool, ProvisionedWorkerPool)
+        assert worker_pool.computeRequirementId is not None
         self.yd_client.worker_pool_client.shutdown_worker_pool_by_id(worker_pool_id)
         self.yd_client.compute_client.terminate_compute_requirement_by_id(
             worker_pool.computeRequirementId
@@ -737,6 +760,8 @@ class RayDogCluster:
         :param worker_node_worker_pool: the properties of the worker nodes worker pool.
         """
 
+        assert worker_node_worker_pool.task_prototype.environment is not None
+        assert self.head_node_private_ip is not None
         worker_node_worker_pool.task_prototype.environment.update(
             {
                 "RAY_HEAD_NODE_PRIVATE_IP": self.head_node_private_ip,  # Deprecated
@@ -744,6 +769,7 @@ class RayDogCluster:
             }
         )
         if self.enable_observability:
+            assert self.observability_node_private_ip is not None
             worker_node_worker_pool.task_prototype.environment.update(
                 {"OBSERVABILITY_HOST": self.observability_node_private_ip}
             )
@@ -819,7 +845,7 @@ class RayDogClusterProxy:
         if self._cluster_state is None:
             raise Exception("Cannot shut down cluster with no cluster state")
 
-        if self._is_shut_down is True:
+        if self._is_shut_down:
             raise Exception("Cluster already shut down")
 
         self._is_shut_down = True  # Set it here to avoid re-running
@@ -837,15 +863,13 @@ class RayDogClusterProxy:
         else:
             raise Exception("No work requirement ID specified")
 
-        if (
-            worker_pool_ids := self._cluster_state.get(WORKER_POOL_IDS_STR)
-        ) is not None:
-            for worker_pool_id in worker_pool_ids:
-                _terminate_compute_requirement_and_shutdown_worker_pool(
-                    self.yd_client, worker_pool_id
-                )
-        else:
+        worker_pool_ids = self._cluster_state.get(WORKER_POOL_IDS_STR)
+        if not isinstance(worker_pool_ids, list):
             raise Exception("No worker pool IDs specified")
+        for worker_pool_id in worker_pool_ids:
+            _terminate_compute_requirement_and_shutdown_worker_pool(
+                self.yd_client, worker_pool_id
+            )
 
 
 def _terminate_compute_requirement_and_shutdown_worker_pool(
@@ -862,6 +886,8 @@ def _terminate_compute_requirement_and_shutdown_worker_pool(
         return
 
     worker_pool = client.worker_pool_client.get_worker_pool_by_id(wp_id)
+    assert isinstance(worker_pool, ProvisionedWorkerPool)
+    assert worker_pool.computeRequirementId is not None
     client.compute_client.terminate_compute_requirement_by_id(
         worker_pool.computeRequirementId
     )
