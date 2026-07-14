@@ -4,4 +4,4 @@ ray[client]
 redis
 requests
 sshtunnel
-yellowdog-sdk >= 15.2.1
+yellowdog-sdk >= 15.4.2
