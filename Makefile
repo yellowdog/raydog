@@ -9,6 +9,23 @@ PYCACHE = __pycache__
 VERSION_FILE := src/yellowdog_ray/__init__.py
 VERSION := $(shell grep "__version__ =" $(VERSION_FILE) | sed -E 's/.*"([^"]+)".*/\1/')
 
+# AMI build settings (see packer/README.md)
+PYTHON_VERSION ?= 3.12.11
+RAY_VERSION ?= 2.56.0
+RAYDOG_VERSION ?=
+AWS_REGION ?= eu-west-2
+SSH_PUBLIC_KEY ?=
+SUBNET_ID ?=
+EXTRA_PIP_PACKAGES ?=
+
+PACKER_VARS = -var "python_version=$(PYTHON_VERSION)" \
+              -var "ray_version=$(RAY_VERSION)" \
+              -var "raydog_version=$(RAYDOG_VERSION)" \
+              -var "aws_region=$(AWS_REGION)" \
+              -var "ssh_public_key=$(SSH_PUBLIC_KEY)" \
+              -var "subnet_id=$(SUBNET_ID)" \
+              -var "extra_pip_packages=$(EXTRA_PIP_PACKAGES)"
+
 build: $(SRC) stubs
 	python -m build
 
@@ -61,7 +78,13 @@ pypi-test-upload: clean build
 pypi-prod-upload: clean build
 	python -m twine upload --repository yellowdog-ray dist/*
 
+ami-validate:
+	cd packer && packer init . && packer validate $(PACKER_VARS) .
+
+ami: ami-validate
+	cd packer && packer build $(PACKER_VARS) .
+
 no_op:
 	# Available targets are: build, clean, install, uninstall, format, update, docs,
-	# docs-build-image, docs-publish-image, pypi-check-build, stubs
-	# pypi-test-upload, pypi-prod-upload
+	# docs-build-image, docs-publish-image, pypi-check-build, stubs,
+	# pypi-test-upload, pypi-prod-upload, ami, ami-validate

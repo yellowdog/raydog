@@ -4,7 +4,7 @@
 
 # Set versions of Python and Ray
 PYTHON_VERSION="3.12.11"
-RAY_VERSION="2.49.2"
+RAY_VERSION="2.56.0"
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ source $HOME/.local/bin/env
 
 echo "Installing Python v$PYTHON_VERSION; creating/activating Python virtual environment"
 VENV=$YD_AGENT_HOME/venv
-uv venv --python $PYTHON_VERSION $VENV
+uv venv --seed --python $PYTHON_VERSION $VENV
 source $VENV/bin/activate
 
 echo "Installing Ray v$RAY_VERSION and RayDog"
