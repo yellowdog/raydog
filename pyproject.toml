@@ -1,35 +1,92 @@
 [build-system]
-    requires = ["setuptools>=61.0", "wheel"]
-    build-backend = "setuptools.build_meta"
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [project]
-    name = "yellowdog-ray"
-    description = "RayDog: YellowDog Integration with Ray."
-    classifiers = [
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Operating System :: OS Independent",
-        "Development Status :: 4 - Beta",
-    ]
-    requires-python = ">= 3.10, < 3.13"
-    dynamic = ["dependencies", "version"]
-    license = "Apache-2.0"
+name = "yellowdog-ray"
+description = "RayDog: build and autoscale Ray clusters on the YellowDog platform."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "YellowDog Limited", email = "support@yellowdog.co" }]
+keywords = ["ray", "yellowdog", "autoscaler", "cluster", "distributed computing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = [
+    "ray[default]>=2.54.0",
+    "yellowdog-sdk>=16.1.1",
+    "python-dotenv",
+    "requests",
+]
 
-[[project.authors]]
-    name = "YellowDog Limited"
-    email = "support@yellowdog.co"
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-cov"]
+dev = [
+    "yellowdog-ray[test]",
+    "build",
+    "mypy",
+    "ruff",
+    "twine",
+    "types-PyYAML",
+    "types-requests",
+]
+docs = ["sphinx", "sphinx-rtd-theme"]
+
+[project.scripts]
+raydog = "yellowdog_ray.cli:main"
 
 [project.urls]
-    Homepage = "https://github.com/yellowdog/raydog"
-    Source = "https://github.com/yellowdog/raydog"
+Homepage = "https://github.com/yellowdog/raydog"
+Documentation = "https://docs.yellowdog.ai/raydog/index.html"
+Source = "https://github.com/yellowdog/raydog"
+Issues = "https://github.com/yellowdog/raydog/issues"
 
-[tool.setuptools.dynamic.version]
-    attr = "yellowdog_ray.__version__"
+[tool.setuptools.packages.find]
+where = ["src"]
 
-[tool.setuptools.dynamic.dependencies]
-    file = ["requirements.txt"]
+[tool.setuptools.package-data]
+yellowdog_ray = ["py.typed"]
 
-[project.readme]
-    file = "PYPI_README.md"
-    content-type = "text/markdown"
+[tool.setuptools.dynamic]
+version = { attr = "yellowdog_ray.__version__" }
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+extend-exclude = [
+    "examples/autoscaler",
+]
+
+[tool.ruff.lint]
+# D213, D209: a multi-line docstring has its opening and closing quotes on lines of
+# their own
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "D213", "D209"]
+
+[tool.mypy]
+strict = true
+files = ["src/yellowdog_ray", "tests", "bin"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not online and not online_instances'"
+markers = [
+    "online: needs YellowDog credentials; creates no instances",
+    "online_instances: needs YellowDog credentials and starts cloud instances",
+]
+
+[tool.coverage.run]
+source = ["yellowdog_ray"]

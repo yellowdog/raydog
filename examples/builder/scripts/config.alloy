@@ -1,0 +1,98 @@
+// Grafana Alloy's configuration for every node of a RayDog cluster with an
+// observability node: it sends the node's Ray metrics, machine metrics and logs to
+// Prometheus and Loki there. On the head and workers the start scripts run Alloy,
+// as the Agent's user, with OBSERVABILITY_HOST set to that node's address; on the
+// observability node itself it runs as a service and sends to 127.0.0.1.
+//
+// Installed by node-setup-userdata.sh (which settings.py fills in from this file)
+// and by the Packer image (../../../packer).
+
+local.file_match "ray" {
+    path_targets = [{"__path__" = "/tmp/ray/session_latest/logs/*", job="ray"}]
+}
+
+loki.source.file "ray" {
+    targets       = local.file_match.ray.targets
+    forward_to    = [loki.write.loki.receiver]
+    tail_from_end = true
+}
+
+local.file_match "worker_output" {
+    path_targets = [{"__path__" = "/var/opt/yellowdog/agent/data/workers/*/taskoutput.txt", job="yellowdog_task_output"}]
+}
+
+loki.source.file "worker_output" {
+    targets       = local.file_match.worker_output.targets
+    forward_to    = [loki.write.loki.receiver]
+    tail_from_end = true
+}
+
+loki.write "loki" {
+    endpoint {
+        url = string.format(
+            "http://%s:3100/loki/api/v1/push",
+            coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
+        )
+    }
+}
+
+// Ray's own metrics, which the start scripts export on this port
+prometheus.scrape "ray" {
+    targets    = [{__address__ = "127.0.0.1:10002", instance = constants.hostname, job = "ray"}]
+    forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
+prometheus.exporter.unix "node" {
+    disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+    enable_collectors  = ["meminfo"]
+
+    filesystem {
+        fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+        mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+        mount_timeout        = "5s"
+    }
+
+    netclass {
+        ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+    }
+
+    netdev {
+        device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+    }
+}
+
+discovery.relabel "node" {
+    targets = prometheus.exporter.unix.node.targets
+
+    rule {
+        target_label = "instance"
+        replacement  = constants.hostname
+    }
+
+    rule {
+        target_label = "job"
+        replacement  = "integrations/node_exporter"
+    }
+}
+
+prometheus.scrape "node" {
+    scrape_interval = "15s"
+    targets         = discovery.relabel.node.output
+    forward_to      = [prometheus.remote_write.prometheus.receiver]
+}
+
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy" {
+    targets    = prometheus.exporter.self.alloy.targets
+    forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
+prometheus.remote_write "prometheus" {
+    endpoint {
+        url = string.format(
+            "http://%s:9090/api/v1/write",
+            coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
+        )
+    }
+}

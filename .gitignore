@@ -177,3 +177,13 @@ cython_debug/
 .pypirc
 
 .DS_Store
+
+# Local credentials and keys
+.env-*
+private-key
+*.pem
+id_rsa*
+id_ed25519*
+
+# macOS
+.DS_Store

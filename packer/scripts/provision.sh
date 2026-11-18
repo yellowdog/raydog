@@ -4,15 +4,42 @@
 #
 # Expected environment variables (set by the Packer shell provisioner):
 #   PYTHON_VERSION   e.g. "3.12.11" (required)
-#   RAY_VERSION      e.g. "2.56.0"  (required)
-#   RAYDOG_VERSION   e.g. "2.0.1"; empty means latest from PyPI
+#   RAY_VERSION      e.g. "2.60.0"  (required)
+#   RAYDOG_VERSION   e.g. "3.0.0"; empty means the latest version 3 from PyPI
+#   RAYDOG_PIP_SPEC  a pip requirement for RayDog in place of RAYDOG_VERSION, e.g.
+#                    "yellowdog-ray @ git+https://github.com/yellowdog/raydog@next-version";
+#                    empty to use RAYDOG_VERSION
 #   SSH_PUBLIC_KEY   public key text to authorise for yd-agent; empty to skip
 #   EXTRA_PIP_PACKAGES  space-separated pip requirement specifiers to add to
 #                       the venv, e.g. "numpy==2.3.1 pandas"; empty to skip
+#   ALLOY_CONFIG     where Alloy's configuration is; default /tmp/config.alloy,
+#                    where the template uploads examples/builder/scripts/config.alloy
 #
-# Runs as root.
+# Runs as root, on an instance that is about to be imaged: it ends by removing the
+# SSH host keys and the login keys of root and ubuntu, so an instance it is run on
+# by hand cannot be reached over SSH afterwards.
+#
+# Downloads, unpinned: the latest installers for the YellowDog Agent and uv, and
+# Grafana Alloy. Pin versions in these URLs and package names for reproducible
+# images.
 
 set -euo pipefail
+
+# Checked first, rather than after several minutes of installing
+ALLOY_CONFIG="${ALLOY_CONFIG:-/tmp/config.alloy}"
+for name in PYTHON_VERSION RAY_VERSION; do
+  if [[ -z "${!name:-}" ]]; then
+    echo "provision.sh: $name must be set" >&2
+    exit 1
+  fi
+done
+if [[ ! -f "$ALLOY_CONFIG" ]]; then
+  echo "provision.sh: Alloy's configuration is not at $ALLOY_CONFIG. The Packer" \
+       "template uploads it; to run this script another way, copy" \
+       "examples/builder/scripts/config.alloy to the instance and set ALLOY_CONFIG" \
+       "to its path." >&2
+  exit 1
+fi
 
 echo "Waiting for cloud-init to complete on the build instance"
 cloud-init status --wait
@@ -31,26 +58,6 @@ YD_AGENT_HOME="/opt/yellowdog/agent"
 
 ################################################################################
 
-echo "Adding $YD_AGENT_USER to passwordless sudoers"
-usermod -aG sudo $YD_AGENT_USER
-echo -e "$YD_AGENT_USER\tALL=(ALL)\tNOPASSWD: ALL" > \
-    /etc/sudoers.d/020-$YD_AGENT_USER
-
-################################################################################
-
-if [[ -n "${SSH_PUBLIC_KEY:-}" ]]; then
-  echo "Adding public SSH key for $YD_AGENT_USER"
-  mkdir -p $YD_AGENT_HOME/.ssh
-  chmod og-rwx $YD_AGENT_HOME/.ssh
-  echo "$SSH_PUBLIC_KEY" >> $YD_AGENT_HOME/.ssh/authorized_keys
-  chmod og-rw $YD_AGENT_HOME/.ssh/authorized_keys
-  chown -R $YD_AGENT_USER:$YD_AGENT_USER $YD_AGENT_HOME/.ssh
-else
-  echo "SSH_PUBLIC_KEY not set; skipping SSH key installation"
-fi
-
-################################################################################
-
 echo "Installing 'uv'"
 export HOME=$YD_AGENT_HOME
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -63,10 +70,14 @@ VENV=$YD_AGENT_HOME/venv
 uv venv --seed --python "$PYTHON_VERSION" $VENV
 source $VENV/bin/activate
 
-if [[ -n "${RAYDOG_VERSION:-}" ]]; then
+if [[ -n "${RAYDOG_PIP_SPEC:-}" ]]; then
+  RAYDOG_SPEC="$RAYDOG_PIP_SPEC"
+elif [[ -n "${RAYDOG_VERSION:-}" ]]; then
   RAYDOG_SPEC="yellowdog-ray==$RAYDOG_VERSION"
 else
-  RAYDOG_SPEC="yellowdog-ray"
+  # Version 2 has a different layout on the node and is not what this script
+  # sets up, so it is never picked up by default
+  RAYDOG_SPEC="yellowdog-ray>=3"
 fi
 echo "Installing Ray v$RAY_VERSION and RayDog ($RAYDOG_SPEC)"
 uv pip install "ray[default,client]==$RAY_VERSION" "$RAYDOG_SPEC"
@@ -78,8 +89,39 @@ if [[ -n "${EXTRA_PIP_PACKAGES:-}" ]]; then
   uv pip install $EXTRA_PIP_PACKAGES
 fi
 
-echo "Extending .bashrc to activate the Ray environment"
-echo "source $VENV/bin/activate" >> $YD_AGENT_HOME/.bashrc
+# The RayDog example start scripts look for the Python environment here
+mkdir -p /opt/raydog
+ln -sfn "$VENV" /opt/raydog/venv
+
+# The same .bashrc as the example setup scripts write. Ray's cluster launcher runs
+# its commands on a node over SSH, in a shell that reads this file: `ray exec
+# cluster.yaml 'ray status'`, and the `ray stop` with which `ray down` begins.
+echo "Writing .bashrc: Ray on the PATH, and 'ray stop' ignored"
+cat > "$YD_AGENT_HOME/.bashrc" << 'BASHRC'
+# Written by RayDog's node setup.
+export PATH="/opt/raydog/venv/bin:$PATH"
+
+# A RayDog node is stopped by ending its task, which stops Ray as it goes. Stopping
+# Ray from here would end the task as a failure, so `ray stop` does nothing.
+ray() {
+    if [ "${1:-}" = "stop" ]; then
+        echo "raydog: this node stops when its task ends; 'ray stop' ignored"
+    else
+        command ray "$@"
+    fi
+}
+BASHRC
+
+################################################################################
+
+if [[ -n "${SSH_PUBLIC_KEY:-}" ]]; then
+  echo "Adding public SSH key for $YD_AGENT_USER"
+  install -d -m 700 "$YD_AGENT_HOME/.ssh"
+  printf '%s\n' "$SSH_PUBLIC_KEY" >> "$YD_AGENT_HOME/.ssh/authorized_keys"
+  chmod 600 "$YD_AGENT_HOME/.ssh/authorized_keys"
+else
+  echo "SSH_PUBLIC_KEY not set; skipping SSH key installation"
+fi
 
 ################################################################################
 
@@ -95,134 +137,14 @@ apt-get update
 apt-get -y install alloy
 systemctl disable alloy
 
-cat > /etc/alloy/config.alloy <<'EOF'
-local.file_match "ray" {
-    path_targets = [{"__path__" = "/tmp/ray/session_latest/logs/*", job="ray"}]
-}
-
-loki.source.file "ray" {
-    targets       = local.file_match.ray.targets
-    forward_to    = [loki.write.loki.receiver]
-    tail_from_end = true
-}
-
-local.file_match "worker_output" {
-    path_targets = [{"__path__" = "/var/opt/yellowdog/agent/data/workers/*/taskoutput.txt", job="yellowdog_task_output"}]
-}
-
-loki.source.file "worker_output" {
-    targets       = local.file_match.worker_output.targets
-    forward_to    = [loki.write.loki.receiver]
-    tail_from_end = true
-}
-
-loki.source.journal "journal" {
-  max_age       = "24h0m0s"
-  relabel_rules = discovery.relabel.logs_integrations_integrations_node_exporter_journal_scrape.rules
-  forward_to    = [loki.write.loki.receiver]
-}
-
-loki.write "loki" {
-	endpoint {
-		url = string.format(
-			"http://%s:3100/loki/api/v1/push",
-			coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
-		)
-	}
-}
-
-prometheus.exporter.self "alloy" {}
-
-prometheus.scrape "ray" {
-    targets    = [{__address__ = "127.0.0.1:10002", instance = constants.hostname, job = "ray" }]
-    forward_to = [prometheus.remote_write.mimir.receiver]
-}
-
-prometheus.exporter.unix "integrations_node_exporter" {
-  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
-  enable_collectors = ["meminfo"]
-
-  filesystem {
-    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
-    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
-    mount_timeout        = "5s"
-  }
-
-  netclass {
-    ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
-  }
-
-  netdev {
-    device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
-  }
-}
-
-discovery.relabel "integrations_node_exporter" {
-  targets = prometheus.exporter.unix.integrations_node_exporter.targets
-
-  rule {
-    target_label = "instance"
-    replacement  = constants.hostname
-  }
-
-  rule {
-    target_label = "job"
-    replacement = "integrations/node_exporter"
-  }
-}
-
-discovery.relabel "logs_integrations_integrations_node_exporter_journal_scrape" {
-  targets = []
-
-  rule {
-    target_label = "instance"
-    replacement  = constants.hostname
-  }
-  rule {
-    source_labels = ["__journal__systemd_unit"]
-    target_label  = "unit"
-  }
-
-  rule {
-    source_labels = ["__journal__boot_id"]
-    target_label  = "boot_id"
-  }
-
-  rule {
-    source_labels = ["__journal__transport"]
-    target_label  = "transport"
-  }
-
-  rule {
-    source_labels = ["__journal_priority_keyword"]
-    target_label  = "level"
-  }
-}
-
-prometheus.scrape "integrations_node_exporter" {
-  scrape_interval = "15s"
-  targets    = discovery.relabel.integrations_node_exporter.output
-  forward_to = [prometheus.remote_write.mimir.receiver]
-}
-
-prometheus.scrape "alloy" {
-	targets    = prometheus.exporter.self.alloy.targets
-	forward_to = [prometheus.remote_write.mimir.receiver]
-}
-
-prometheus.remote_write "mimir" {
-	endpoint {
-		url = string.format(
-			"http://%s:9090/api/v1/write",
-			coalesce(sys.env("OBSERVABILITY_HOST"), "127.0.0.1"),
-		)
-	}
-}
-EOF
-chmod 755 /etc/alloy /etc/alloy/config.alloy
+install -d -m 755 /etc/alloy
+install -m 644 "$ALLOY_CONFIG" /etc/alloy/config.alloy
 
 ################################################################################
 
+# Ray uses many ports between the nodes of a cluster, so access is controlled by
+# the instances' security group, not on the host. Ubuntu's cloud images ship with
+# ufw off; this makes sure.
 echo "Disabling firewall"
 ufw disable
 

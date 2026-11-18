@@ -1,39 +1,22 @@
 #!/usr/bin/bash
+# Starts Ray on the head node, in a container. Runs as a YellowDog task, as the
+# Agent's user, for as long as the cluster lives. Used when RAYDOG_USE_CONTAINERS
+# is set (see settings.py). Excludes the observability option.
 
-set -eo pipefail
+set -euo pipefail
 
-################################################################################
+# The image to use, as recorded by the node setup script
+[[ -f /etc/raydog-node.env ]] && source /etc/raydog-node.env
+RAY_IMAGE="${RAY_IMAGE:-rayproject/ray:2.60.0-py312}"
+CONTAINER="raydog-head-$$"
 
-# Set container name using the process ID
-CONTAINER_NAME=yd-container-$$
+trap 'docker stop "$CONTAINER" > /dev/null 2>&1 || true; echo "raydog: Ray stopped"' EXIT
 
-cleanup_docker() {
-  CONTAINER_ID=$(docker ps -aq --filter name=$CONTAINER_NAME)
-  if [ -n "$CONTAINER_ID" ]
-  then
-    echo
-    echo "Abort received at: $(date -u "+%Y-%m-%d_%H%M%S_UTC")"
-    echo "Stopping container: $CONTAINER_NAME ($CONTAINER_ID)"
-    docker stop "$CONTAINER_ID" > /dev/null
-    echo "Done"
-  fi
-}
-
-# Trap EXIT signal and run the container cleanup function
-trap cleanup_docker EXIT
-
-################################################################################
-
-# Note: excludes observability support
-
-# Run the container
-docker run --rm --name $CONTAINER_NAME \
-           --network=host \
-           --shm-size=1gb \
-           --ulimit nofile=65536 \
-           ray-container \
-           bash -c 'ray start --disable-usage-stats --head --port=6379 \
-                              --dashboard-host=0.0.0.0 \
-                              --num-cpus=0 --memory=0 --block'
-
-################################################################################
+# Host networking lets the workers reach Ray, and SSH tunnels reach the Ray client
+# port and the dashboard (which listens on localhost only), exactly as without a
+# container.
+docker run --rm --init --name "$CONTAINER" \
+    --network=host --shm-size=2gb --ulimit nofile=65536 \
+    "$RAY_IMAGE" \
+    bash -c 'exec ray start --head --port=6379 --num-cpus=0 --memory=0 \
+                  --disable-usage-stats --block'

@@ -26,14 +26,20 @@ variable "python_version" {
 
 variable "ray_version" {
   type        = string
-  default     = "2.56.0"
+  default     = "2.60.0"
   description = "Ray version to install"
 }
 
 variable "raydog_version" {
   type        = string
   default     = ""
-  description = "yellowdog-ray version to install; empty means latest from PyPI"
+  description = "yellowdog-ray version to install; empty means the latest version 3 from PyPI"
+}
+
+variable "raydog_pip_spec" {
+  type        = string
+  default     = ""
+  description = "pip requirement for RayDog in place of raydog_version, e.g. \"yellowdog-ray @ git+https://github.com/yellowdog/raydog@next-version\"; empty to use raydog_version"
 }
 
 variable "aws_region" {
@@ -112,7 +118,7 @@ source "amazon-ebs" "raydog" {
     Project       = "raydog"
     PythonVersion = var.python_version
     RayVersion    = var.ray_version
-    RayDogVersion = var.raydog_version == "" ? "latest" : var.raydog_version
+    RayDogVersion = var.raydog_pip_spec != "" ? substr(var.raydog_pip_spec, 0, 255) : (var.raydog_version == "" ? "latest" : var.raydog_version)
     SourceAMI     = "{{ .SourceAMI }}"
     SourceAMIName = "{{ .SourceAMIName }}"
     BuiltBy       = "packer"
@@ -122,6 +128,12 @@ source "amazon-ebs" "raydog" {
 
 build {
   sources = ["source.amazon-ebs.raydog"]
+
+  # Alloy's configuration, shared with the Builder example's node setup script
+  provisioner "file" {
+    source      = "${path.root}/../examples/builder/scripts/config.alloy"
+    destination = "/tmp/config.alloy"
+  }
 
   provisioner "shell" {
     script = "${path.root}/scripts/provision.sh"
@@ -133,6 +145,7 @@ build {
       "PYTHON_VERSION=${var.python_version}",
       "RAY_VERSION=${var.ray_version}",
       "RAYDOG_VERSION=${var.raydog_version}",
+      "RAYDOG_PIP_SPEC=${var.raydog_pip_spec}",
       "SSH_PUBLIC_KEY=${var.ssh_public_key}",
       "EXTRA_PIP_PACKAGES=${var.extra_pip_packages}",
     ]

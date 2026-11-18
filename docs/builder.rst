@@ -1,136 +1,153 @@
-RayDog Builder
-==============
+The Builder
+===========
 
-The RayDog cluster builder uses YellowDog to provision Ray clusters manually.
+The Builder is a Python API for creating a Ray cluster and controlling it directly: you decide when it is built, how many workers of which kinds it has, and when it ends. Most clusters are better served by :doc:`autoscaler`; the Builder is for a cluster that is part of a larger program, has a size you choose, must be created without SSH access to the head node, or must not hold YellowDog credentials. It also reaches its full size sooner, because the workers' instances are requested together with the head's.
 
-Worker pools containing configurable numbers of Ray worker nodes of different types can be added and removed dynamically to expand and contract the cluster during its lifetime.
+Describing a cluster
+--------------------
 
-The RayDog Builder can be faster in operation than the Autoscaler, because it will immediately provision worker pools of the requested sizes rather than waiting for Ray job submissions to drive the Ray autoscaler into provisioning additional resources. Its limitation is that the match between the resources in the cluster and submitted jobs must be balanced manually, and the cluster must also be downscaled manually.
+A :class:`~yellowdog_ray.builder.spec.ClusterSpec` names the cluster and describes its head node. A :class:`~yellowdog_ray.core.cluster.NodeSpec` describes one kind of node: where it runs, and what it runs.
 
-The Builder is intended for integration in user code.
+.. code-block:: python
 
-Usage
------
+   from datetime import timedelta
+   from yellowdog_ray import ClusterSpec, NodeSpec
 
-The ``yellowdog_ray.raydog.builder`` module defines a ``RayDogCluster`` class.
+   head = NodeSpec(
+       compute_requirement_template="my-namespace/ray-head",
+       start_script=open("scripts/head-node-task-script.sh").read(),
+       images_id="my-namespace/ubuntu-26-04",   # optional: an image family (or an image ID)
+       userdata=open("scripts/node-setup-userdata.sh").read(),   # optional: run at first boot
+   )
 
-1. The constructor for the ``RayDogCluster`` class establishes the YellowDog application credentials for accessing the platform, sets up general cluster properties, and sets the properties required to provision a single Ray head node. The task script to run the Ray head node process is specified. It optionally also sets the properties for provisioning an observability node running Prometheus and Grafana.
+   spec = ClusterSpec(
+       name="demo",
+       namespace="my-namespace",
+       head=head,
+       lifetime=timedelta(hours=8),             # optional: 24 hours by default
+   )
 
+``NodeSpec`` fields:
 
-2. The ``add_worker_pool()`` method sets the properties, node count and worker node task script for a worker pool supplying Ray worker nodes. This method can be called multiple times to add heterogeneous Ray worker nodes, with different numbers of nodes of each type. This method can be called one or more times before calling the ``build()`` method, or after it to allow worker pools to be added dynamically to the cluster. Each worker pool can optionally be created with a user-defined ``worker_pool_internal_name``, which can subsequently be used to remove the worker pool using ``remove_worker_pool_by_internal_name()``.
+``compute_requirement_template``
+   The YellowDog compute requirement template for the node's instances (``namespace/name``, or an ID).
 
+``start_script``
+   A Bash script that starts Ray on the node. It runs as a YellowDog task for as long as the node is part of the cluster, so it must not return while Ray is running: use ``ray start --block``. Worker scripts are given the head node's private address in ``RAY_HEAD_IP``.
 
-3. The ``build()`` method creates the cluster, and returns the private and (if applicable) public IP addresses of the head node. It also provisions any worker pools defined by the ``add_worker_pool()`` method prior to ``build()`` being invoked. The method blocks until the head node is running. After it returns, Ray worker nodes will still be in the process of configuring and joining the cluster. A timeout can be set that cancels cluster creation if exceeded while the head node is still being configured.
+``images_id``, ``userdata``, ``instance_tags``, ``metrics_enabled``
+   Optional: the image (a YellowDog image family as ``namespace/name`` or by ID, or a cloud image ID: see :doc:`nodes`); a script to run when an instance first boots; tags for the cloud instances; and whether YellowDog collects node metrics.
 
+``ClusterSpec`` also accepts ``tag`` (applied to the YellowDog work requirement and compute requirements), ``build_timeout``, ``idle_shutdown`` and ``observability`` (see below).
 
-4. The ``remove_worker_pool()`` method will remove a Ray worker node worker pool by its ID, or ``remove_worker_pool_by_internal_name()`` can be used instead if a ``worker_pool_internal_name`` was supplied when the pool was created. This causes the compute requirement associated with the worker pool to be terminated immediately, and the worker node tasks running on the nodes will fail (this is by design). The nodes should be gracefully removed from the Ray cluster, which will remain operational with a reduced node count.
+Building and shutting down
+--------------------------
 
+.. code-block:: python
 
-5. The ``shut_down()`` method shuts down the Ray cluster by cancelling its associated work requirement, aborting all the tasks representing the head node and worker nodes, and shutting down all worker pools. The cancellation of the work requirement is by design.
+   from yellowdog_ray import RayDogCluster
 
-Requirements
+   with RayDogCluster(spec) as cluster:
+       cluster.add_worker_pool("workers", worker, count=4)
+       head_node = cluster.build()
+       print(head_node.private_ip, head_node.public_ip)
+       ...
+
+Creating the ``RayDogCluster`` object does nothing. :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.build` creates the cluster and returns once the head node is running, with its addresses. If anything goes wrong, including the head node failing to start within the build timeout, everything created so far is removed and the error is raised.
+
+A cluster name can be in use by one cluster at a time in a namespace. If a cluster of the same name is already running, ``build()`` raises :class:`~yellowdog_ray.errors.ClusterExistsError`. If one is there but no longer works, because its head node has ended, or it had none within its build timeout, or its lifetime has passed, ``build()`` removes it with a warning and goes on, as ``ray up`` does.
+
+Leaving the ``with`` block shuts the cluster down, whether the block finished or raised. To keep the cluster running after the block, call :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.detach`. Without ``with``, call :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.shut_down` yourself, ideally in a ``finally``.
+
+``shut_down()`` returns as soon as the shutdown has been requested. ``shut_down(wait=True)`` returns only when no instance is left. It is safe to call more than once; if it raises :class:`~yellowdog_ray.errors.TeardownError`, something may still be running and it should be called again.
+
+Worker pools
 ------------
 
-All provisioned nodes (head, worker, and optionally observability) must advertise the ``bash`` task type, in order to run the startup scripts for setting up and running the Ray head node and worker nodes.
+A worker pool is a named group of identical worker nodes. A cluster can have any number of them, each with its own kind of node, and they can be added, resized and removed **at any time**, before the cluster is built or while it is running.
 
-Ray Head Node and Worker Node Start-Up Scripts
-----------------------------------------------
+.. code-block:: python
 
-Default Scripts
-^^^^^^^^^^^^^^^
+   cluster.add_worker_pool("cpu", cpu_node, count=8)
+   cluster.add_worker_pool("gpu", gpu_node, count=0, max_count=4)   # none yet, room for four
+   cluster.build()
 
-Default Bash scripts are provided for the script arguments in the constructor, and are found at: https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts.
+   cluster.resize_worker_pool("gpu", 2)       # grow
+   cluster.resize_worker_pool("cpu", 4)       # shrink: nodes not yet started go first
 
-If these scripts are used 'as-is', the Ray virtual environment to be activated must be situated in the YellowDog agent home directory at ``/opt/yellowdog/agent/venv``.
+   for name, pool in cluster.worker_pools.items():
+       print(name, pool.count, pool.max_count)
 
-A default userdata node setup script is also supplied that is suitable for configuring base Ubuntu 22.04 nodes by:
+Pools added before ``build()`` are created by it, and their instances boot while the head node's does. A pool can be resized between zero and its ``max_count``, which is fixed when the pool is added and defaults to its initial count.
 
-- Installing the YellowDog Agent
-- Installing Python and Ray
-- Installing the observability packages
+Changing a running cluster
+++++++++++++++++++++++++++
 
-User-Supplied Scripts
-^^^^^^^^^^^^^^^^^^^^^
+Nothing about a cluster's pools is fixed by ``build()``. On a running cluster:
 
-To use your own Bash task scripts, there are three requirements:
+.. code-block:: python
 
-1. ensure that an EXIT trap is set that stops Ray gracefully, e.g.::
+   # A new kind of node, when the work turns out to need it
+   cluster.add_worker_pool("highmem", highmem_node, count=2, max_count=6)
 
-    trap "ray stop; echo Ray stopped" EXIT
+   cluster.resize_worker_pool("highmem", 6)   # more of them
+   cluster.resize_worker_pool("highmem", 1)   # fewer
 
-2. When Ray is started on either the head node or worker nodes, use the ``--block`` option with the ``ray start`` command, to ensure the YellowDog task lifecycle matches that of the Ray processes.
+   # And gone again, when that part of the work is done
+   cluster.remove_worker_pool("highmem")
 
+- :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.add_worker_pool` creates the pool at once and starts its nodes, which join the cluster as they come up. It needs the head node to be running, since the new workers are told where it is.
+- :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.resize_worker_pool` adds nodes, or stops them. Nodes are counted as they are now, so resizing to the size a pool is meant to have also replaces any that have been lost.
+- :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.remove_worker_pool` stops the pool's nodes and releases its instances. Work running on them is lost to Ray in the same way as if the nodes had failed, so remove a pool when it is idle. The head node and the other pools are not affected.
+- All three work from any process that has attached to the cluster, not only the one that built it: see below.
 
-3. For the script used to set up Ray worker nodes, the private IP address of the head node to connect to will be found in the environment variable ``RAY_HEAD_IP``. For example, use the command line option ``--address=$RAY_HEAD_IP:6379`` when starting the Ray processes. (For legacy reasons, the deprecated variable ``RAY_HEAD_NODE_PRIVATE_IP`` is also available to identify the head node.)
+A removed pool's name cannot be used again in the same cluster for 24 hours, because the platform keeps the names of ended pools that long.
 
-Creating SSH Tunnels for the Ray client, dashboard, etc.
---------------------------------------------------------
+Using the cluster
+-----------------
 
-The utility class ``RayTunnels`` in module ``yellowdog_ray.utils.ray_ssh_tunnels`` allows SSH tunnels to be created using a local private key to SSH to the public IP of the Ray head node. The client, etc., can then be accessed using, e.g., ``localhost:10001``.
+``build()`` returns when the head node's start script is running; worker nodes join shortly afterwards. Nodes usually have private addresses only reachable from inside their network, so from elsewhere use an SSH tunnel:
 
-By default, tunnels are set up for the client on port ``10001``, and the Ray dashboard on port ``8265``.
+.. code-block:: python
 
-Observability
--------------
+   import ray
+   from yellowdog_ray import RayTunnels
 
-An **observability node** can optionally be added to the RayDog cluster, hosting Prometheus and Grafana to supply information to the Ray dashboard. The node is added by setting the ``RayDogCluster`` constructor argument ``enable_observability`` to ``True``, supplying the required values for instance provisioning, and for the task script that starts up the required observability processes.
+   with RayTunnels(head_node.public_ip, user="yd-agent", private_key="~/.ssh/id_ed25519"):
+       ray.init("ray://localhost:10001")          # the Ray client
+       ...                                        # the dashboard is at http://localhost:8265
 
-The private IP address of the observability node is available in the ``OBSERVABILITY_HOST`` environment variable supplied to the head node task and the worker node tasks, and this can be used to set up the required observability connections.
+:meth:`~yellowdog_ray.builder.cluster.RayDogCluster.status` reports the state of the head node and of each pool. The ``head`` property gives the head node's addresses if it is running now, and ``None`` if it is not.
 
-Saving Cluster State to Allow Later Cluster Shutdown
-----------------------------------------------------
+Picking a cluster up again
+--------------------------
 
-When a running RayDog cluster has been built, it's possible to save the essential state required to shut down the cluster later.
+A cluster does not belong to the object that built it. Any process with credentials can attach to it by name:
 
-Saving the Cluster State
-^^^^^^^^^^^^^^^^^^^^^^^^
+.. code-block:: python
 
-The ``RayDogCluster`` object has methods ``save_state_to_json()``, which returns a JSON string, and ``save_state_to_json_file(file_name)`` which writes the JSON state to the nominated file. These should be used only after the ``build()`` method has been invoked, when the required IDs are known.
+   cluster = RayDogCluster.attach("demo", "my-namespace")
+   print(cluster.status().head_alive, dict(cluster.worker_pools))
+   cluster.resize_worker_pool("cpu", 2)
+   cluster.shut_down(wait=True)
 
-The contents of the saved state are (e.g.)::
+An attached cluster can do everything the original could, with one exception: to *grow* a pool that another process added, pass ``start_script=`` to ``resize_worker_pool``, since this process has never seen it.
 
-    {
-      "cluster_name": "ray-prod-1748357565-702532",
-      "cluster_namespace": "my-ray-namespace",
-      "cluster_tag": "my-ray-production",
-      "work_requirement_id": "ydid:workreq:000000:9d12fec4-faf2-4e8f-a179-80e5d8729276",
-      "worker_pool_ids": [
-        "ydid:wrkrpool:000000:d66bb53e-b3da-4df4-961c-204a0195e981",
-        "ydid:wrkrpool:000000:b957728f-0b5d-49b7-a45d-f97aa450bb5e",
-        "ydid:wrkrpool:000000:572fd46d-9c4c-4274-90c7-dcd5d95a52ba",
-        "ydid:wrkrpool:000000:a5317856-182f-4d46-a64a-95549cbdf30a"
-      ]
-    }
+:meth:`~yellowdog_ray.builder.cluster.RayDogCluster.save_state` writes a small JSON description of the cluster (its name and identifiers, never credentials), and :meth:`~yellowdog_ray.builder.cluster.RayDogCluster.from_state` reads one back. Unlike ``attach``, ``from_state`` also finds a cluster that has already ended, so that anything it left behind can be shut down.
 
-Only the ``work_requirement_id`` and ``worker_pool_ids`` properties are used; the other properties are for information only.
+An observability node
+---------------------
 
-Using Saved Cluster State
-^^^^^^^^^^^^^^^^^^^^^^^^^
+Give ``ClusterSpec`` an ``observability`` node to have one extra node started before the head, for Prometheus and Grafana for example. Its private address is given to the head and worker start scripts in ``OBSERVABILITY_HOST``.
 
-To use the saved state:
+The Builder example has a complete one: ``RAYDOG_OBSERVABILITY=1 python usage-example.py`` adds a node running Prometheus, Loki and Grafana, with Ray's dashboards, to which every other node sends its metrics and logs; Ray's dashboard then shows Grafana's graphs. The example's README describes how it is set up and how to view it.
 
-1. Instantiate an object of class ``RayDogClusterProxy``, supplying the YellowDog Application Key ID and Secret to authenticate with the platform
-2. Load the saved state using one of the methods ``load_saved_state_from_json()``, supplying a JSON string as the argument, or ``load_saved_state_from_json_file()``, supplying the name of a file containing JSON content as the argument
-3. Invoke the ``shut_down()`` method; this will cancel the work requirement (aborting executing tasks) and shut down all worker pools
+Errors
+------
 
-.. note::
+Everything RayDog raises deliberately derives from :class:`~yellowdog_ray.errors.RayDogError`: :class:`~yellowdog_ray.errors.ConfigError` for a specification that cannot work, :class:`~yellowdog_ray.errors.ClusterExistsError` when a cluster of that name is already running (one that no longer works is replaced instead), :class:`~yellowdog_ray.errors.NodeStartError` and :class:`~yellowdog_ray.errors.BuildTimeoutError` when a node fails to start, :class:`~yellowdog_ray.errors.ClusterStateError` for an operation that makes no sense now, :class:`~yellowdog_ray.errors.TeardownError` when a shutdown could not be completed, and :class:`~yellowdog_ray.errors.PlatformError` when a call to YellowDog fails.
 
-    This feature must be used with caution:
+Examples
+--------
 
-    1. Only save the state for a RayDog cluster that has already been built, and note that any subsequent changes (adding or removing worker pools) will not be reflected in existing saved state
-    2. When loading state into a ``RayDogClusterProxy`` object the cluster state may now be invalid and the ``shut_down()`` method will throw exceptions if asked to operate on a stale work requirement or worker pools.
-
-Usage Examples
---------------
-
-Usage examples can be found at: https://github.com/yellowdog/raydog/tree/main/examples/builder
-
-Running Ray in Docker Containers
---------------------------------
-
-It's possible to run the Ray processes in containers rather than on the host. The task start scripts need to be modified to run the desired container instead of running the Ray processes directly on the host. They must also stop the container on exit. Script examples can be found at:
-
-- https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts/head-node-task-script-docker.sh and
-- https://github.com/yellowdog/raydog/tree/main/examples/builder/scripts/worker-node-task-script-docker.sh
-
-The container image(s) must include the required versions of Python and Ray.
+Complete, runnable examples are in `examples/builder <https://github.com/yellowdog/raydog/tree/main/examples/builder>`_: ``usage-example.py`` builds a cluster, runs a small Ray job through a tunnel and shuts down (with an observability node too, given ``RAYDOG_OBSERVABILITY=1``); ``manage-example.py`` adds, resizes and removes pools and hands the cluster to "another process" through its saved state.

@@ -1,39 +1,18 @@
 #!/usr/bin/bash
+# Starts Ray on a worker node, in a container. Runs as a YellowDog task for as long
+# as the node lives. RayDog sets RAY_HEAD_IP to the head node's private address.
+# Used when RAYDOG_USE_CONTAINERS is set (see settings.py).
 
-set -eo pipefail
+set -euo pipefail
 
-################################################################################
+[[ -f /etc/raydog-node.env ]] && source /etc/raydog-node.env
+RAY_IMAGE="${RAY_IMAGE:-rayproject/ray:2.60.0-py312}"
+CONTAINER="raydog-worker-$$"
 
-# Set container name using the process ID
-CONTAINER_NAME=yd-container-$$
+trap 'docker stop "$CONTAINER" > /dev/null 2>&1 || true; echo "raydog: Ray stopped"' EXIT
 
-cleanup_docker() {
-  CONTAINER_ID=$(docker ps -aq --filter name=$CONTAINER_NAME)
-  if [ -n "$CONTAINER_ID" ]
-  then
-    echo
-    echo "Abort received at: $(date -u "+%Y-%m-%d_%H%M%S_UTC")"
-    echo "Stopping container: $CONTAINER_NAME ($CONTAINER_ID)"
-    docker stop "$CONTAINER_ID" > /dev/null
-    echo "Done"
-  fi
-}
-
-# Trap EXIT signal and run the container cleanup function
-trap cleanup_docker EXIT
-
-################################################################################
-
-# Note: excludes observability support
-
-# Run the container
-docker run --rm --name $CONTAINER_NAME \
-           --env RAY_HEAD_NODE_PRIVATE_IP="$RAY_HEAD_NODE_PRIVATE_IP" \
-           --network=host \
-           --shm-size=1gb \
-           --ulimit nofile=65536 \
-           ray-container \
-           bash -c 'ray start --disable-usage-stats \
-                              --address=$RAY_HEAD_NODE_PRIVATE_IP:6379 --block'
-
-################################################################################
+docker run --rm --init --name "$CONTAINER" \
+    --network=host --shm-size=2gb --ulimit nofile=65536 \
+    -e RAY_HEAD_IP="$RAY_HEAD_IP" \
+    "$RAY_IMAGE" \
+    bash -c 'exec ray start --address="$RAY_HEAD_IP:6379" --disable-usage-stats --block'

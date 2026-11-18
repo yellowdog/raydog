@@ -1,168 +1,128 @@
 #!/usr/bin/env python3
+"""
+Build a Ray cluster with the RayDog Builder, run a small job on it, shut it down.
+
+    python usage-example.py
+    RAYDOG_OBSERVABILITY=1 python usage-example.py    # with an observability node
+
+Settings come from the environment: see settings.py.
+"""
+
+from __future__ import annotations
 
 import logging
-import random
-from datetime import datetime, timedelta
-from fractions import Fraction
-from os import getenv, path
-from time import sleep
+import sys
+import time
+from datetime import timedelta
+from typing import Any
 
-import dotenv
-import ray
+import settings as example_settings
 
-from yellowdog_ray.raydog.builder import RayDogCluster
-from yellowdog_ray.utils.ray_ssh_tunnels import RayTunnels
+from yellowdog_ray import (
+    ClusterSpec,
+    HeadNode,
+    PortForward,
+    RayDogCluster,
+    RayTunnels,
+)
 
-NUM_WORKER_POOLS = 2
-NODES_PER_WORKER_POOL = 2
-TOTAL_WORKER_NODES = NUM_WORKER_POOLS * NODES_PER_WORKER_POOL
-
-# Load the example userdata and task scripts
-CURRENT_DIR = path.dirname(path.abspath(__file__))
-SCRIPTS_DIR = path.join(CURRENT_DIR, "scripts")
-SCRIPT_PATHS = {
-    "node-setup-userdata": f"{SCRIPTS_DIR}/node-setup-userdata.sh",
-    "head-node-task-script": f"{SCRIPTS_DIR}/head-node-task-script.sh",
-    "worker-node-task-script": f"{SCRIPTS_DIR}/worker-node-task-script.sh",
-}
-DEFAULT_SCRIPTS = {}
-for name, script_path in SCRIPT_PATHS.items():
-    with open(path.join(CURRENT_DIR, script_path)) as file:
-        DEFAULT_SCRIPTS[name] = file.read()
-
-IMAGES_ID = "ami-0fef583e486727263"  # Ubuntu 22.04, AMD64, eu-west-2
+WORKER_NODES = 2
+WORKER_JOIN_TIMEOUT_SECONDS = 600
+GRAFANA_PORT = 3000
 
 
-def main():
-    timestamp = str(datetime.timestamp(datetime.now())).replace(".", "-")
-
-    raydog_cluster: RayDogCluster | None = None
-    raydog_tunnels: RayTunnels | None = None
-
-    try:
-        # Read any extra environment variables from a file
-        dotenv.load_dotenv(
-            dotenv_path=dotenv.find_dotenv(usecwd=True), verbose=True, override=True
-        )
-
-        # Configure the RayDog cluster
-        raydog_cluster = RayDogCluster(
-            yd_application_key_id=getenv("YD_API_KEY_ID"),
-            yd_application_key_secret=getenv("YD_API_KEY_SECRET"),
-            cluster_name=f"raytest-{timestamp}",  # Names the WP, WR and worker tag
-            cluster_namespace="pwt-ray",
-            head_node_compute_requirement_template_id=(
-                "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead-big"
-                if TOTAL_WORKER_NODES > 1000
-                else "yd-demo/yd-demo-aws-eu-west-2-split-ondemand-rayhead"
-            ),
-            head_node_images_id=IMAGES_ID,
-            cluster_tag="my-ray-tag",
-            cluster_lifetime=timedelta(seconds=600),
-            head_node_metrics_enabled=True,
-            head_node_ray_start_script=DEFAULT_SCRIPTS["head-node-task-script"],
-            head_node_userdata=DEFAULT_SCRIPTS["node-setup-userdata"],
-        )
-
-        # Add worker node worker pools
-        for _ in range(NUM_WORKER_POOLS):
-            raydog_cluster.add_worker_pool(
-                worker_node_compute_requirement_template_id="yd-demo/yd-demo-aws-eu-west-2-split-ondemand",
-                worker_pool_node_count=NODES_PER_WORKER_POOL,
-                worker_node_images_id=IMAGES_ID,
-                worker_node_metrics_enabled=True,
-                worker_node_task_script=DEFAULT_SCRIPTS["worker-node-task-script"],
-                worker_node_userdata=DEFAULT_SCRIPTS["node-setup-userdata"],
-            )
-
-        # Build the Ray cluster
-        print("Building Ray cluster")
-        private_ip, public_ip = raydog_cluster.build(
-            head_node_build_timeout=timedelta(seconds=300)
-        )
-        print(f"Head node started at public IP: '{public_ip}'")
-
-        print("Setting up SSH tunnels for Ray client and dashboard to Ray head node")
-        raydog_tunnels = RayTunnels(
-            ray_head_ip_address=public_ip,
-            ssh_user="yd-agent",
-            private_key_file="private-key",
-        )
-        raydog_tunnels.start_tunnels()
-        cluster_address = "ray://localhost:10001"
-
-        print("Pausing to allow all worker nodes to start")
-        sleep(90)
-
-        # Run a simple application on the cluster
-        print("Starting simple Ray application")
-        estimate_pi(cluster_address, TOTAL_WORKER_NODES)
-        print("Finished")
-
-        input("Hit enter to shut down cluster ")
-
-    finally:
-        # Make sure the Ray cluster and tunnels get shut down
-        if raydog_cluster is not None:
-            print("Shutting down Ray cluster")
-            raydog_cluster.shut_down()
-        if raydog_tunnels is not None:
-            print("Shutting down Ray SSH tunnels")
-            raydog_tunnels.stop_tunnels()
-
-
-# simple Ray example
-@ray.remote
-def pi4_sample(sample_count):
-    """pi4_sample runs sample_count experiments, and returns the
-    fraction of random coordinates that are inside a unit circle.
+def tunnel_forwards(observability: Any) -> tuple[PortForward, ...]:
     """
-    in_count = 0
-    for i in range(sample_count):
-        x = random.random()
-        y = random.random()
-        if x * x + y * y <= 1:
-            in_count += 1
-    return Fraction(in_count, sample_count)
+    The Ray client and the dashboard on the head node; and, with an observability
+    node, its Grafana, at localhost:3000, where the start script told Ray's
+    dashboard to find it for the graphs it embeds.
+    """
+    forwards = (RayTunnels.CLIENT, RayTunnels.DASHBOARD)
+    if observability is None:
+        return forwards
+    grafana = PortForward(
+        GRAFANA_PORT, GRAFANA_PORT, remote_host=observability.private_ip
+    )
+    return (*forwards, grafana)
 
 
-def estimate_pi(cluster_address, num_worker_nodes):
-    # Initialize Ray
-    print("Connecting Ray to", cluster_address)
-    ray.init(address=cluster_address, logging_level=logging.ERROR)
+def run_ray_job(
+    head: HeadNode,
+    ssh_user: str,
+    ssh_private_key: str,
+    workers: int,
+    observability: Any,
+) -> None:
+    """Connect to the cluster through an SSH tunnel and run a trivial Ray job."""
+    import ray
 
-    # How long do we want to spend working?
-    idealtime = timedelta(seconds=60)
-    mintime = 0.75 * idealtime
+    if head.public_ip is None:
+        raise SystemExit("This example needs a head node with a public IP address")
+    with RayTunnels(
+        head.public_ip,
+        user=ssh_user,
+        private_key=ssh_private_key,
+        forwards=tunnel_forwards(observability),
+    ):
+        ray.init(address="ray://localhost:10001")
+        # build() returns when the head node is running; the workers join shortly
+        # after. The head offers no CPUs itself, so wait for them.
+        deadline = time.monotonic() + WORKER_JOIN_TIMEOUT_SECONDS
+        while sum(1 for node in ray.nodes() if node["Alive"]) < workers + 1:
+            if time.monotonic() > deadline:
+                raise SystemExit("The worker nodes did not join the cluster in time")
+            time.sleep(5)
 
-    # Get several estimates of pi
-    batches = 100 * num_worker_nodes
-    while True:
-        print(f"Getting {batches} estimates of pi")
-        start = datetime.now()
+        @ray.remote
+        def square(x: int) -> int:
+            return x * x
 
-        results = []
-        for _ in range(batches):
-            results.append(pi4_sample.remote(1000 * 1000))
+        print("Result:", sum(ray.get([square.remote(i) for i in range(100)])))
+        ray.shutdown()
 
-        output = ray.get(results)
-        mypi = sum(output) * 4 / len(output)
-
-        dur = datetime.now() - start
-
-        print(f"Estimation took {dur} seconds")
-        print(f"The average estimate is {mypi} =", float(mypi))
-
-        if dur >= mintime:
-            break
-        else:
-            print("That was too quick. Increasing the number of estimates")
-            batches = int(batches * (idealtime / dur))
-
-    # Shutdown Ray
-    ray.shutdown()
+        if observability is not None and sys.stdin.isatty():
+            # Keep the cluster, and the tunnel, until the user has had a look
+            print(
+                "Ray's dashboard, with graphs from Grafana: http://localhost:8265\n"
+                f"Grafana itself: http://localhost:{GRAFANA_PORT} (its admin "
+                "password is in ~/grafana-admin-password on the observability "
+                "node)"
+            )
+            input("Press Enter to shut the cluster down: ")
 
 
-# Entry point
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    settings = example_settings.load(default_cluster_name="raydog-usage")
+    spec = ClusterSpec(
+        name=settings.cluster_name,
+        namespace=settings.namespace,
+        head=settings.head,
+        # A backstop: the cluster is shut down below, but if this process dies
+        # first, nothing outlives this
+        lifetime=timedelta(hours=1),
+        # Started before the head, which is told its address
+        observability=(
+            settings.observability if settings.observability_enabled else None
+        ),
+    )
+
+    # Leaving the 'with' block shuts the cluster down, whatever happens inside it
+    with RayDogCluster(spec) as cluster:
+        # Worker instances are requested when the cluster is built, so they boot
+        # while the head node does
+        cluster.add_worker_pool("workers", settings.worker, count=WORKER_NODES)
+        head = cluster.build()
+        print(f"Head node: private IP {head.private_ip}, public IP {head.public_ip}")
+        run_ray_job(
+            head,
+            settings.ssh_user,
+            settings.ssh_private_key,
+            WORKER_NODES,
+            cluster.observability,
+        )
+    print("Cluster shut down")
+
+
 if __name__ == "__main__":
     main()

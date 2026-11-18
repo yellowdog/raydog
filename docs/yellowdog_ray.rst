@@ -1,13 +1,12 @@
-yellowdog\_ray RayDog
-=====================
+API reference
+=============
 
-Subpackages
------------
+The classes and functions of the ``yellowdog_ray`` package.
 
 .. toctree::
    :maxdepth: 4
 
-   yellowdog_ray.raydog.builder
-   yellowdog_ray.raydog.autoscaler
-   yellowdog_ray.utils
+   yellowdog_ray.builder
+   yellowdog_ray.autoscaler
+   yellowdog_ray.tools
 

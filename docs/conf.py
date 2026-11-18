@@ -10,7 +10,7 @@ from datetime import date
 
 from yellowdog_ray import __version__
 
-project = f"RayDog: YellowDog Integration with Ray"
+project = "RayDog: YellowDog Integration with Ray"
 copyright = f"{date.today().year}, YellowDog Limited. Version {__version__}"
 author = "YellowDog Limited"
 release = __version__
