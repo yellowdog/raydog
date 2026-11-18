@@ -8,7 +8,8 @@ import time
 import ray
 
 # Eight one-CPU tasks fill the example's four two-CPU workers exactly. More would
-# wait for a free slot.
+# wait for a free slot (Ray's autoscaler v2 reports such waiting work as requests no
+# node type can fulfill, once the cluster is at max_workers).
 TASKS = 8
 CPUS_PER_TASK = 1
 SLEEP_SECONDS = 30

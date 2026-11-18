@@ -71,10 +71,18 @@ TROUBLESHOOTING_HINT = (
     "https://docs.yellowdog.ai/raydog/troubleshooting.html"
 )
 ENV_HEAD_IP = "RAY_HEAD_IP"
+# Ray's autoscaler v2: switched on by the first, and told each node's type by the
+# second and its identity, the node's YellowDog task ID, by RAY_CLOUD_INSTANCE_ID
+ENV_AUTOSCALER_V2 = "RAY_enable_autoscaler_v2"
+ENV_NODE_TYPE = "RAY_NODE_TYPE_NAME"
 # What a node type declares, made true on the node: Ray's own launcher sets these
 # for `ray start`, which then uses them in place of what it finds on the machine
 ENV_RESOURCES = "RAY_OVERRIDE_RESOURCES"
 ENV_LABELS = "RAY_OVERRIDE_LABELS"
+CLOUD_INSTANCE_ID_LINE = (
+    'export RAY_CLOUD_INSTANCE_ID="$YD_TASK_ID"'
+    "  # added by RayDog for Ray's autoscaler v2"
+)
 
 
 def _declared(
@@ -85,6 +93,19 @@ def _declared(
         **({ENV_RESOURCES: json.dumps(dict(resources))} if resources else {}),
         **({ENV_LABELS: json.dumps(dict(labels))} if labels else {}),
     }
+
+
+def with_cloud_instance_id(script: str) -> str:
+    """
+    A start script that first sets RAY_CLOUD_INSTANCE_ID to the node's task ID,
+    after any ``#!`` line. The ID exists only once the task does, so it cannot be
+    given in the task's environment; the YellowDog Agent gives it to the script as
+    YD_TASK_ID.
+    """
+    if script.startswith("#!"):
+        first, _, rest = script.partition("\n")
+        return f"{first}\n{CLOUD_INSTANCE_ID_LINE}\n{rest}"
+    return f"{CLOUD_INSTANCE_ID_LINE}\n{script}"
 
 
 ENV_CREDENTIALS_FILE = "RAYDOG_CREDENTIALS_FILE"
@@ -234,10 +255,11 @@ class RayDogNodeProvider(NodeProvider):
                 handle,
                 naming.HEAD_ROLE,
                 1,
-                spec.start_script,
-                environment=_declared(
-                    self._config.head_resources, self._config.head_labels
-                ),
+                self._for_autoscaler(spec.start_script),
+                environment={
+                    **self._autoscaler_environment(node_type),
+                    **_declared(self._config.head_resources, self._config.head_labels),
+                },
                 node_tags=tags,
             )[0]
             task_id = task.id
@@ -325,9 +347,10 @@ class RayDogNodeProvider(NodeProvider):
             handle,
             role,
             count,
-            self._script(cfg.K_WORKER_SCRIPT),
+            self._for_autoscaler(self._script(cfg.K_WORKER_SCRIPT)),
             environment={
                 ENV_HEAD_IP: self._head_private_ip(core, handle),
+                **self._autoscaler_environment(node_type),
                 **_declared(resources, labels),
             },
             node_tags=tags,
@@ -582,6 +605,15 @@ class RayDogNodeProvider(NodeProvider):
         with self._lock:
             self._head_ip = address
         return address
+
+    def _autoscaler_environment(self, node_type: str) -> dict[str, str]:
+        """What Ray's autoscaler v2, when chosen, needs in every node's task."""
+        if not self._config.autoscaler_v2:
+            return {}
+        return {ENV_AUTOSCALER_V2: "1", ENV_NODE_TYPE: node_type}
+
+    def _for_autoscaler(self, script: str) -> str:
+        return with_cloud_instance_id(script) if self._config.autoscaler_v2 else script
 
     def _node_spec(
         self, node_type: str, node_config: dict[str, Any], script_key: str

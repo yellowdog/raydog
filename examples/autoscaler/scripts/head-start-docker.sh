@@ -37,11 +37,12 @@ trap 'docker stop "$CONTAINER" > /dev/null 2>&1 || true; echo "raydog: Ray stopp
 # - Host networking lets the workers reach Ray, and SSH tunnels reach the
 #   dashboard, exactly as without a container.
 # - Nothing secret is on a command line.
-# - RayDog sets RAY_OVERRIDE_RESOURCES and RAY_OVERRIDE_LABELS to what the head
-#   node type declares, which `ray start` then uses in place of its own options.
-#   Each is passed on only when set.
+# - RayDog sets the RAY_ variables: the three that Ray's autoscaler v2 needs, and
+#   the resources and labels the head node type declares, which `ray start` then
+#   uses in place of its own options. Each is passed on only when set.
 docker run --rm --init --name "$CONTAINER" --user 0 -e HOME=/root \
     --network=host --shm-size=2gb --ulimit nofile=65536 \
+    -e RAY_enable_autoscaler_v2 -e RAY_CLOUD_INSTANCE_ID -e RAY_NODE_TYPE_NAME \
     -e RAY_OVERRIDE_RESOURCES -e RAY_OVERRIDE_LABELS \
     -v "$CONFIG:/raydog/cluster.yaml:ro" \
     -v "$KEY:/root/ray_bootstrap_key.pem:ro" \

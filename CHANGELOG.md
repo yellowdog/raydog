@@ -17,6 +17,7 @@ A rewrite. Nothing is compatible with version 2: see the "Moving from version 2"
 - An offline test suite, contract tests that run against both the simulated and the real platform, real-platform tests of both modes, GitHub Actions workflows for checks, and a local release script.
 - Support for Python 3.13 and 3.14.
 - Logging under the `yellowdog_ray` logger: a cluster's lifecycle at INFO, and every platform call with its duration at DEBUG. `raydog -v` and `-vv` show them, and so does `ray up` with `RAYDOG_LOG_LEVEL` set to `INFO` or `DEBUG`.
+- Autoscaler: clusters run Ray's autoscaler v2 by default, with RayDog giving every node what it needs; `autoscaler_v2: false` runs the original autoscaler.
 - The Builder replaces a cluster of the same name that no longer works (its head has ended, it never had one within its build timeout, or its lifetime has passed), as `ray up` does. `raydog list` and `raydog status` say how to remove clusters that no longer work.
 - `images_id` accepts a YellowDog image family by name (`namespace/name`), which RayDog looks up, as well as by ID; the documentation recommends families.
 - A node that does not start within the build timeout is reported with how far it got: no instance, an Agent that never registered, or an Agent that did not take its task.

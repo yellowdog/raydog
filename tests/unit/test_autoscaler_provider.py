@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import stat
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from ray.autoscaler.tags import (
 from tests.unit.test_autoscaler_config import cluster_config
 from yellowdog_ray.autoscaler import RayDogNodeProvider
 from yellowdog_ray.autoscaler import config as cfg
+from yellowdog_ray.autoscaler.provider import with_cloud_instance_id
 from yellowdog_ray.core import naming
 from yellowdog_ray.core.clock import Clock
 from yellowdog_ray.core.cluster import ClusterCore
@@ -263,7 +265,7 @@ def test_ray_up_creates_a_cluster_with_a_head(p: FakePlatform) -> None:
     # The head runs the head script, with nothing secret in its task
     task = p.get_task(head_id)
     spec = next(c.args[1][0] for c in p.calls if c.method == "add_tasks")
-    assert spec.script == "ray start --head"
+    assert spec.script == with_cloud_instance_id("ray start --head")  # autoscaler v2
     assert "the-secret" not in str(dict(task.environment)) + str(task.tag)
     work_requirement = p.list_work_requirements(NS, live_only=True)[0]
     assert work_requirement.tag == "user-tag"
@@ -553,7 +555,8 @@ def test_scale_up_creates_a_pool_per_node_type(p: FakePlatform) -> None:
     env = dict(p.get_task(workers[0]).environment)
     assert env["RAY_HEAD_IP"] == client.internal_ip(head_id)
     worker_specs = [c.args[1][0] for c in p.calls if c.method == "add_tasks"][1:]
-    assert all(s.script.startswith("ray start --address") for s in worker_specs)
+    worker_script = with_cloud_instance_id("ray start --address=$RAY_HEAD_IP:6379")
+    assert all(s.script == worker_script for s in worker_specs)
 
     launch(head, conf, "small", 1)  # more of the same type: no new pool
     assert len([c for c in p.calls if c.method == "provision_pool"]) == 3
@@ -1077,6 +1080,43 @@ def test_ray_up_reports_a_head_that_did_not_start_without_a_traceback(
     assert p.live_instances == 0
 
 
+# --- Ray's autoscaler v2 ----------------------------------------------------------
+
+V2_LINE = 'export RAY_CLOUD_INSTANCE_ID="$YD_TASK_ID"'
+
+
+def test_by_default_every_node_gets_what_autoscaler_v2_needs(p: FakePlatform) -> None:
+    """
+    Ray's autoscaler v2 matches its nodes to RayDog's by RAY_CLOUD_INSTANCE_ID (the
+    node's task ID, known only once the task exists, so taken from YD_TASK_ID) and
+    needs each node's type in RAY_NODE_TYPE_NAME; RAY_enable_autoscaler_v2 turns it on.
+    """
+    conf, _, head, head_id = cluster(p)
+    launch(head, conf, "small", 1)
+    nodes = head.non_terminated_nodes({})
+    worker_id = next(n for n in nodes if n != head_id)
+    for task_id, node_type in ((head_id, "head"), (worker_id, "small")):
+        task = p.get_task(task_id)
+        env = dict(task.environment)
+        assert env["RAY_enable_autoscaler_v2"] == "1"
+        assert env["RAY_NODE_TYPE_NAME"] == node_type
+    scripts = [
+        task.script for c in p.calls if c.method == "add_tasks" for task in c.args[1]
+    ]
+    assert len(scripts) == 2 and all(V2_LINE in s for s in scripts)
+
+
+def test_with_the_original_autoscaler_nothing_is_added(p: FakePlatform) -> None:
+    conf, _, head, _ = cluster(p, autoscaler_v2=False)
+    launch(head, conf, "small", 1)
+    for c in p.calls:
+        if c.method == "add_tasks":
+            for task in c.args[1]:
+                assert V2_LINE not in task.script
+                assert "RAY_enable_autoscaler_v2" not in task.environment
+                assert "RAY_NODE_TYPE_NAME" not in task.environment
+
+
 def test_the_head_has_the_resources_and_labels_its_type_declares(
     p: FakePlatform,
 ) -> None:
@@ -1105,16 +1145,18 @@ def test_the_head_has_the_resources_and_labels_its_type_declares(
     assert "RAY_OVERRIDE_LABELS" not in env
 
 
+@pytest.mark.parametrize("autoscaler_v2", [True, False])
 def test_a_worker_has_the_resources_and_labels_its_type_declares(
-    p: FakePlatform,
+    p: FakePlatform, autoscaler_v2: bool
 ) -> None:
     """
     Ray plans with the resources each node type declares, so its own launcher makes
     ``ray start`` use them (RAY_OVERRIDE_RESOURCES, RAY_OVERRIDE_LABELS) whatever the
     machine has; so does RayDog. Otherwise a node that has fewer CPUs than its type
-    declares leaves Ray's plan short.
+    declares leaves Ray's plan short, and autoscaler v2 reports the work it cannot
+    place as requests no node type can fulfill.
     """
-    conf, _, head, head_id = cluster(p)
+    conf, _, head, head_id = cluster(p, autoscaler_v2=autoscaler_v2)
     launch(
         head,
         conf,
@@ -1133,3 +1175,16 @@ def test_a_worker_has_the_resources_and_labels_its_type_declares(
     assert json.loads(declared["RAY_OVERRIDE_LABELS"]) == {"zone": "a"}
     assert "RAY_OVERRIDE_RESOURCES" not in undeclared
     assert "RAY_OVERRIDE_LABELS" not in undeclared
+
+
+def test_the_instance_id_line_comes_after_the_shebang_and_works() -> None:
+    script = with_cloud_instance_id('#!/usr/bin/bash\necho "$RAY_CLOUD_INSTANCE_ID"\n')
+    assert script.startswith("#!/usr/bin/bash\n")
+    ran = subprocess.run(
+        ["bash", "-c", script],
+        env={"YD_TASK_ID": "ydid:task:x:1:1", "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    assert ran.stdout.strip() == "ydid:task:x:1:1"
+    assert with_cloud_instance_id("echo hi\n").startswith(V2_LINE)

@@ -32,6 +32,7 @@ K_BUILD_TIMEOUT = "build_timeout_minutes"
 K_NODE_IDLE = "node_idle_shutdown_seconds"
 K_WORKER_GRACE = "worker_start_grace_seconds"
 K_REFRESH = "refresh_interval_seconds"
+K_AUTOSCALER_V2 = "autoscaler_v2"
 K_HEAD_SCRIPT = "head_start_script"
 K_WORKER_SCRIPT = "worker_start_script"
 K_DISABLE_UPDATERS = "disable_node_updaters"  # Ray's own key
@@ -43,7 +44,7 @@ K_HEAD_LABELS = "raydog_head_labels"
 
 _USER_KEYS = {
     K_NAMESPACE, K_TAG, K_LIFETIME, K_BUILD_TIMEOUT, K_NODE_IDLE, K_WORKER_GRACE,
-    K_REFRESH, K_HEAD_SCRIPT, K_WORKER_SCRIPT, K_DISABLE_UPDATERS,
+    K_REFRESH, K_HEAD_SCRIPT, K_WORKER_SCRIPT, K_DISABLE_UPDATERS, K_AUTOSCALER_V2,
 }  # fmt: skip
 # Ray's own provider keys, which pass through untouched
 _OTHER_KEYS = {
@@ -129,6 +130,7 @@ class ProviderConfig:
     node_idle_shutdown: timedelta = timedelta(seconds=60)
     worker_start_grace: timedelta = timedelta(0)
     refresh_interval: timedelta = timedelta(seconds=2)
+    autoscaler_v2: bool = True  # Ray's autoscaler v2; False for the original
     max_workers: Mapping[str, int] = field(default_factory=dict)
     head_resources: Mapping[str, float] = field(default_factory=dict)
     head_labels: Mapping[str, str] = field(default_factory=dict)
@@ -218,6 +220,7 @@ def parse_provider_config(
         node_idle_shutdown=timedelta(seconds=_number(provider, K_NODE_IDLE, 60)),
         worker_start_grace=timedelta(seconds=_number(provider, K_WORKER_GRACE, 0)),
         refresh_interval=timedelta(seconds=_number(provider, K_REFRESH, 2)),
+        autoscaler_v2=_flag(provider, K_AUTOSCALER_V2, default=True),
         max_workers=dict(max_workers),
         head_resources=dict(head_resources),
         head_labels=dict(head_labels),
@@ -443,6 +446,15 @@ def _text(section: Mapping[str, object], key: str, where: str = "provider") -> s
     value = section.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{where}.{key} is required and must be text")
+    return value
+
+
+def _flag(
+    section: Mapping[str, object], key: str, default: bool, where: str = "provider"
+) -> bool:
+    value = section.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where}.{key} must be true or false")
     return value
 
 

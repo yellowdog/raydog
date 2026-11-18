@@ -37,6 +37,14 @@ from yellowdog_ray.tunnels import PortForward
 
 pytestmark = pytest.mark.online_instances
 
+# The default autoscaler is v2; RAYDOG_TEST_AUTOSCALER_V1=1 runs the same tests with
+# Ray's original one (`autoscaler_v2: false`)
+AUTOSCALER_V1 = (_setting("RAYDOG_TEST_AUTOSCALER_V1") or "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 SCRIPTS = REPO_ROOT / "examples" / "autoscaler" / "scripts"
 # Two one-CPU tasks that must run on different nodes (a strictly spread placement
 # group), on a head that offers no CPUs: the cluster has to grow by two workers.
@@ -244,6 +252,8 @@ def test_ray_up_scale_and_down(h: Harness, tmp_path: Path, variant: str) -> None
             "head_start_script": f"file:{tmp_path / 'head-start.sh'}",
             "worker_start_script": f"file:{worker_script}",
             "worker_start_grace_seconds": 30 if in_container else 0,
+            # Left out unless testing the way back, so that the default is what runs
+            **({"autoscaler_v2": False} if AUTOSCALER_V1 else {}),
         },
         "auth": {"ssh_user": "yd-agent", "ssh_private_key": str(key)},
         "file_mounts": {"~/raydog-wheels": str(wheels)},
@@ -362,6 +372,25 @@ def test_ray_up_scale_and_down(h: Harness, tmp_path: Path, variant: str) -> None
             [ray, "exec", str(config_file), "ray status"], env, tmp_path, 300
         )
         assert "Resources" in ray_status.stdout, ray_status.stdout[-2000:]
+
+        # The autoscaler that ran all of the above is the one meant (v2 by default):
+        # v2 has a monitor process of its own, seen from the host, container or not
+        which = run(
+            [
+                ray,
+                "exec",
+                str(config_file),
+                "pgrep -f autoscaler/v2/monitor.py > /dev/null"
+                " && echo RAYDOG_AUTOSCALER=v2 || echo RAYDOG_AUTOSCALER=v1",
+            ],
+            env,
+            tmp_path,
+            300,
+        )
+        found = re.search(r"RAYDOG_AUTOSCALER=(v\d)", which.stdout + which.stderr)
+        assert found and found[1] == ("v1" if AUTOSCALER_V1 else "v2"), which.stdout[
+            -2000:
+        ]
 
         # With nothing left to do, Ray lets the workers go
         deadline = time.monotonic() + 420

@@ -64,7 +64,14 @@ After the head node starts, Ray connects to it over SSH. It needs the head's add
 Workers are added and then removed again
 ----------------------------------------
 
-Ray drops a worker that it has been told is ready but has not heard from within about 30 seconds. If the worker's start script does slow work before starting Ray, set ``worker_start_grace_seconds`` to cover it. If the worker's Ray cannot reach the head node at all, check that the nodes can reach each other on Ray's ports (6379 and the worker port range).
+With the original autoscaler (``autoscaler_v2: false``), Ray drops a worker that it has been told is ready but has not heard from within about 30 seconds; if the worker's start script does slow work before starting Ray, set ``worker_start_grace_seconds`` to cover it. Autoscaler v2 waits much longer for each stage of a node's start, and ``ray status -v`` shows any node that failed to start, with the reason. If the worker's Ray cannot reach the head node at all, check that the nodes can reach each other on Ray's ports (6379 and the worker port range).
+
+"No available node types can fulfill resource requests"
+-------------------------------------------------------
+
+Ray's autoscaler v2, which RayDog uses by default, prints this, every few seconds, while a job wants more than the cluster may grow to: once the workers it would need would take a node type past its ``max_workers`` (or the cluster past its own), the work left over is reported this way, with how much of it there is (``{'CPU': 1.0}*2``). The work is not lost: it waits, and runs as earlier work finishes and frees a slot. Raise ``max_workers`` to let more of it run at once. The message means something else when no node type has the resources asked for at all, such as a GPU on a cluster without GPUs: then nothing will ever run it.
+
+Early in a job you may also see a line from the head node's ``raylet`` about "tasks with infeasible resource requests": the head offers Ray no CPUs, so until the first worker has joined, no node in the cluster can run a task that needs one.
 
 A cluster name is "already running"
 -----------------------------------

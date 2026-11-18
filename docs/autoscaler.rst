@@ -87,10 +87,13 @@ The ``provider`` section
      - How long an instance is kept after Ray has finished with its node.
    * - ``worker_start_grace_seconds``
      - 0
-     - How long a worker's start script may run before Ray expects to hear from the node. Ray drops a worker it has not heard from within about 30 seconds of being told it is ready; raise this if the start script does something slow first, such as pulling a container image.
+     - With the original autoscaler only (``autoscaler_v2: false``): how long a worker's start script may run before Ray expects to hear from the node. That autoscaler drops a worker it has not heard from within about 30 seconds of being told it is ready; raise this if the start script does something slow first, such as pulling a container image. Autoscaler v2 waits for each stage of a node's start separately, by default up to an hour for Ray to start on it, and ignores this setting.
    * - ``refresh_interval_seconds``
      - 2
      - How fresh the provider's view of the cluster's nodes must be: Ray asks for the list of nodes often, and RayDog asks YellowDog again only if its last answer is older than this. Raise it for very large clusters to reduce the load on the platform, at the price of Ray noticing changes that much later.
+   * - ``autoscaler_v2``
+     - true
+     - Which of Ray's autoscalers runs the cluster: ``true`` for autoscaler v2, ``false`` for the original one (see `Autoscaler versions`_).
    * - ``use_internal_ips``
      - false
      - Ray's own setting: connect to the head node by its private address. Needed if the head has no public address.
@@ -189,11 +192,17 @@ Nothing in RayDog itself changes: the start scripts run ``docker run`` instead o
 - On the head node, Ray's autoscaler inside the container must find the credentials directory (``~/.raydog``) and the key Ray copied over (``~/ray_bootstrap_key.pem``) at the same places under its own home directory as on the host: mount them there, read-only. Without the key the autoscaler starts no workers, and says so only in its own log (``monitor.err``). The configuration file can be mounted anywhere and named with ``--autoscaling-config``. Pass nothing secret on the command line.
 - The same goes for every path under ``file_mounts`` in the cluster config: Ray's autoscaler examines each of them when it starts, and stops, taking the head node's Ray with it, if one is missing. Mount each into the head's container at the same place under the container user's home directory as it has on the host.
 - The files Ray copies to the head node are readable only by the Agent's user, so the container must run as a user that can read them. The example runs the head's container as root for that reason.
-- Give workers time to start (``worker_start_grace_seconds``), and pull the image when the instance boots rather than when the node starts.
+- With the original autoscaler, give workers time to start (``worker_start_grace_seconds``; autoscaler v2 needs no such setting). Either way, pull the image when the instance boots rather than when the node starts.
 - Give the instances room for the image. ``rayproject/ray`` is over 2 GB unpacked, and the GPU and ML images are several times that; an instance whose disk fills during the pull never becomes a node, and ``ray up`` reports that the head node did not start.
 - RayDog must be installed in the head node's container image (workers need only Ray).
 
 Autoscaler versions
 -------------------
 
-RayDog works with both of Ray's autoscaler implementations. A cluster started as above runs the original one. To use "autoscaler v2", the head script must export ``RAY_enable_autoscaler_v2=1``, and every node's script must set ``RAY_CLOUD_INSTANCE_ID`` to the node's YellowDog task ID (available to the script as ``YD_TASK_ID``) and ``RAY_NODE_TYPE_NAME`` to its node type. This recipe follows from Ray's source and from RayDog's unit tests, which replay the calls autoscaler v2 makes; unlike the original autoscaler, it has not been run against real instances with RayDog.
+RayDog works with both of Ray's autoscaler implementations, and uses autoscaler v2 unless the provider section says ``autoscaler_v2: false``. Ray's own ``ray up`` also uses v2 by default, from Ray 2.50; RayDog starts Ray from its own start scripts, so the choice is made in RayDog's settings.
+
+The two differ in how they keep track of nodes. The original autoscaler keeps its own picture, built from tags it writes on each node and matched to Ray's nodes by address, and treats a node it has not heard from within about 30 seconds of being ready as dead. Autoscaler v2 follows each node through explicit stages (requested, allocated, Ray installing, Ray running, stopping, terminated), matches nodes by an identity each one declares, gives each stage its own timeout, and asks Ray to drain an idle node before removing it, which Ray refuses if the node has become busy. ``ray status`` shows more with v2, including nodes that are pending or failed to start, and why.
+
+With autoscaler v2, RayDog gives every node what autoscaler v2 needs: ``RAY_enable_autoscaler_v2=1`` and the node's type in ``RAY_NODE_TYPE_NAME``, in the task's environment, and its identity, which for RayDog is the node's YellowDog task ID, in ``RAY_CLOUD_INSTANCE_ID``. The task ID exists only once the task does, so that last one is set by a line RayDog adds at the top of the start script (after any ``#!`` line), from the ``YD_TASK_ID`` the YellowDog Agent gives every task. The start scripts need nothing extra, except that a script running Ray in a container must pass these three variables on, as the example's container scripts do.
+
+Both have been run with RayDog's real-platform tests, on plain nodes and in containers. ``autoscaler_v2: false`` is the way back to the original autoscaler, for a cluster that depends on how it behaves.

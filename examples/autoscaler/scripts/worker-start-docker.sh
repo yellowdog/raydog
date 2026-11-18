@@ -10,11 +10,12 @@ CONTAINER="raydog-worker-$$"
 
 trap 'docker stop "$CONTAINER" > /dev/null 2>&1 || true; echo "raydog: Ray stopped"' EXIT
 
-# RayDog sets RAY_OVERRIDE_RESOURCES and RAY_OVERRIDE_LABELS to what the node type
-# declares, which `ray start` then uses in place of what it finds. Each is passed on
-# only when set.
+# RayDog sets the RAY_ variables: the three that Ray's autoscaler v2 needs, and the
+# resources and labels the node type declares, which `ray start` then uses in place
+# of what it finds. Each is passed on only when set.
 docker run --rm --init --name "$CONTAINER" \
     --network=host --shm-size=2gb --ulimit nofile=65536 \
+    -e RAY_enable_autoscaler_v2 -e RAY_CLOUD_INSTANCE_ID -e RAY_NODE_TYPE_NAME \
     -e RAY_OVERRIDE_RESOURCES -e RAY_OVERRIDE_LABELS \
     -e RAY_HEAD_IP="$RAY_HEAD_IP" \
     "$RAY_IMAGE" \

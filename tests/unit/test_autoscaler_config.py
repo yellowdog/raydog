@@ -408,3 +408,11 @@ def test_the_yaml_directory_is_searched_before_the_working_directory(
         cluster_config(head_start_script="file:scripts/head.sh"), dirs
     )
     assert result["provider"]["head_start_script"] == "the right script"
+
+
+def test_autoscaler_v2_is_on_unless_turned_off() -> None:
+    assert cfg.parse_provider_config(provider(), "demo").autoscaler_v2 is True
+    off = cfg.parse_provider_config(provider(autoscaler_v2=False), "demo")
+    assert off.autoscaler_v2 is False
+    with pytest.raises(ConfigError, match="autoscaler_v2"):
+        cfg.parse_provider_config(provider(autoscaler_v2="yes"), "demo")

@@ -32,11 +32,12 @@ provider:
   # build_timeout_minutes: 10        # how long the head node is given to start
   # node_idle_shutdown_seconds: 60   # how long an instance is kept after Ray has
   #                                  # finished with its node
-  # worker_start_grace_seconds: 0    # how long a worker's start script may take
-  #                                  # before Ray expects to hear from it; raise
-  #                                  # this if workers pull a container image
+  # worker_start_grace_seconds: 0    # original autoscaler only: how long a worker's
+  #                                  # start script may take before Ray expects to
+  #                                  # hear from it
   # use_internal_ips: false          # true if this machine reaches the head node
   #                                  # by its private address (no public IP)
+  # autoscaler_v2: true             # Ray's autoscaler v2; false for the original
   lifetime_hours: 2
 
 auth:

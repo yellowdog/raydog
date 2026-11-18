@@ -26,6 +26,7 @@ Offline tests use no network and never sleep: time is a `FakeClock` that moves o
 make test-instances ARGS="-k container"   # tests/online in containers (Docker), only
 make test-instances ARGS="-k bare"        # tests/online with Ray installed on the nodes, only
 make test-instances ARGS="tests/online"   # both variants of tests/online, no contract tests
+RAYDOG_TEST_AUTOSCALER_V1=1 make test-instances ARGS="tests/online"   # with Ray's original autoscaler
 ```
 
 The container variant runs Ray in the `rayproject/ray` image, set up by `examples/autoscaler/scripts/node-setup-docker.sh` and started by the `-docker` start scripts. Its workers need room for the image (see `RAYDOG_TEST_CONTAINER_WORKER_TEMPLATE` and `RAYDOG_TEST_DOCKER_IN_MEMORY`).
@@ -46,6 +47,7 @@ Read from the environment, or from a `.env` file at the repository root. Nothing
 | `RAYDOG_TEST_CONTAINER_WORKER_TEMPLATE` | template for workers in the container variant of `tests/online`, whose instances need at least 8 GB of memory (or of free disk, with `RAYDOG_TEST_DOCKER_IN_MEMORY=0`) for the Ray image | the head template |
 | `RAYDOG_TEST_DOCKER_IN_MEMORY` | `0` for Docker on the container variant's nodes to keep its images on disk, which needs a few gigabytes free, rather than in memory | in memory |
 | `RAYDOG_TEST_SSH_PRIVATE_KEY` | for `tests/online`: a private key whose public half is beside it as `<path>.pub`; the head node must accept SSH from this machine | `~/.raydog-probe/id_ed25519` |
+| `RAYDOG_TEST_AUTOSCALER_V1` | `1` to run `tests/online` with Ray's original autoscaler (`autoscaler_v2: false`); either way the tests check which autoscaler ran | autoscaler v2, RayDog's default |
 | `RAYDOG_TEST_USERDATA_FILE` | a script run at instance boot; use the YellowDog Agent installer if the image's Agent may be out of date | none |
 
 `tests/online` sets nodes up with the example setup scripts, so it needs an image those work on (plain Ubuntu); `RAYDOG_TEST_USERDATA_FILE` is not used there. It builds the RayDog under test into a wheel and lets Ray carry it to the head node, so nothing needs to be published or pushed first.
