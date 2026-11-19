@@ -33,7 +33,7 @@ A rewrite. Nothing is compatible with version 2: see the "Moving from version 2"
 - `RayTunnels` uses the OpenSSH client and is a context manager. It refuses to start if a local port is already in use, and does not check host keys unless asked to (`ssh_options`).
 - Ray 2.54 or later is required.
 - Version 16.1.1 or later of the YellowDog SDK (`yellowdog-sdk`) is required.
-- The Builder example's observability node is set up when it boots, before its Agent starts: Prometheus (with its storage capped), Loki, and Grafana with Ray's dashboards and an admin password of its own. Grafana Alloy's configuration is one file, shared with the Packer image.
+- The Builder example's `RAYDOG_OBSERVABILITY=1` now puts Prometheus and Grafana on the head node, as the Autoscaler example does and Ray's own guide recommends, with no extra node. The observability node, which also collects every node's logs, is now `RAYDOG_OBSERVABILITY=node`. It is set up when it boots, before its Agent starts: Prometheus (with its storage capped), Loki, and Grafana with Ray's dashboards and an admin password of its own. Grafana Alloy's configuration is one file, shared with the Packer image, and is installed at boot only when there is an observability node.
 - The Packer image keeps `ray stop` from ending a node's task, as the example setup scripts do, so `ray down` works on clusters built from it.
 
 ### Removed

@@ -42,12 +42,22 @@ uv pip install --python "$VENV/bin/python" \
 # The download cache is the size of Ray again, on what may be a small disk
 uv cache clean >> "$LOG" 2>&1
 
+# Installs packages, trying again for a few minutes: a package repository can fail
+# for a while. `apt-get update` is allowed to fail, so that one broken repository on
+# the image does not stop the rest.
+export DEBIAN_FRONTEND=noninteractive
+apt_install() {
+    for _ in 1 2 3 4 5; do
+        apt-get update || true
+        apt-get install -y "$@" && return 0
+        sleep 20
+    done
+    return 1
+}
+
 # Ray copies files to the head node with rsync
 if ! command -v rsync > /dev/null; then
-    # `apt-get update` may fail on one broken third-party repository; carry on
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update >> "$LOG" 2>&1 || true
-    apt-get install -y rsync >> "$LOG" 2>&1
+    apt_install rsync >> "$LOG" 2>&1
 fi
 
 ################################################################################
@@ -58,14 +68,12 @@ fi
 # head carries on without them.
 
 setup_observability() {
-    export DEBIAN_FRONTEND=noninteractive
     mkdir -p /etc/apt/keyrings &&
     curl --fail -LsS --retry 5 https://apt.grafana.com/gpg.key \
         | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg &&
     echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
         > /etc/apt/sources.list.d/grafana.list || return 1
-    apt-get update || true
-    apt-get install -y --no-install-recommends prometheus grafana || return 1
+    apt_install --no-install-recommends prometheus grafana || return 1
     apt-get clean
 
     cat > /etc/prometheus/prometheus.yml << 'EOF'

@@ -8,7 +8,6 @@ platform using the same replay of Ray's calls as the unit tests.
 
 from __future__ import annotations
 
-import base64
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -34,6 +33,11 @@ from yellowdog_ray.testing import FakePlatform
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "autoscaler"
 TEMPLATES = ["raydog.yaml", "raydog-docker.yaml"]
+# The most script a node's userdata may hold. EC2 takes at most 16 KB of userdata,
+# base64-encoded, but that includes what YellowDog adds of its own, so the limit is
+# what has been seen to work: 9.5 KB of script booted on real instances, and 11.4 KB
+# was refused by EC2.
+USERDATA_LIMIT = 9_600
 PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE user@example"
 
 
@@ -240,12 +244,12 @@ def test_the_container_variant_has_no_observability() -> None:
 def test_every_node_types_userdata_fits_in_an_instance(
     template: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """EC2 takes at most 16 KB of userdata, base64-encoded."""
+    """See USERDATA_LIMIT."""
     monkeypatch.setenv("RAYDOG_OBSERVABILITY", "1")
     config = as_ray_bootstraps(rendered(template))
     for node_type in config["available_node_types"]:
         script = userdata_of(config, node_type)
-        assert len(base64.b64encode(script.encode())) <= 16 * 1024, node_type
+        assert len(script.encode()) <= USERDATA_LIMIT, node_type
 
 
 def cfg_parse(config: dict[str, Any]) -> Any:

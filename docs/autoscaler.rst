@@ -194,7 +194,7 @@ Nothing in RayDog itself changes: the start scripts run ``docker run`` instead o
 - The files Ray copies to the head node are readable only by the Agent's user, so the container must run as a user that can read them. The example runs the head's container as root for that reason.
 - With the original autoscaler, give workers time to start (``worker_start_grace_seconds``; autoscaler v2 needs no such setting). Either way, pull the image when the instance boots rather than when the node starts.
 - Give the instances room for the image. ``rayproject/ray`` is over 2 GB unpacked, and the GPU and ML images are several times that; an instance whose disk fills during the pull never becomes a node, and ``ray up`` reports that the head node did not start.
-- RayDog must be installed in the head node's container image (workers need only Ray).
+- Ray's own images work as they are. Workers need only Ray. The head node's container also needs RayDog, because Ray's autoscaler runs there and uses it to start and stop nodes; the example installs it with ``pip`` as the container starts, which needs PyPI to be reachable and adds a little to the head's start. An image of your own, built ``FROM rayproject/ray`` with RayDog added, avoids both. Whichever image you use, its Python and Ray must match those on the machines that connect to the cluster.
 
 Autoscaler versions
 -------------------

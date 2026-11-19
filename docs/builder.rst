@@ -140,7 +140,7 @@ An observability node
 
 Give ``ClusterSpec`` an ``observability`` node to have one extra node started before the head, for Prometheus and Grafana for example. Its private address is given to the head and worker start scripts in ``OBSERVABILITY_HOST``.
 
-The Builder example has a complete one: ``RAYDOG_OBSERVABILITY=1 python usage-example.py`` adds a node running Prometheus, Loki and Grafana, with Ray's dashboards, to which every other node sends its metrics and logs; Ray's dashboard then shows Grafana's graphs. The example's README describes how it is set up and how to view it.
+You may not need one. For graphs in Ray's dashboard, Ray's own guide runs Prometheus and Grafana on the head node, where Ray keeps the list of every node's metrics endpoint for Prometheus to collect from. The Builder example does this with ``RAYDOG_OBSERVABILITY=1``, as the Autoscaler example does. A node of their own costs an instance, but keeps that work off the head and leaves room for more: with ``RAYDOG_OBSERVABILITY=node``, the example adds a node running Prometheus, Loki and Grafana, with Ray's dashboards, to which every other node sends its metrics and logs. The example's README describes how each is set up and how to view it.
 
 Errors
 ------
@@ -150,4 +150,4 @@ Everything RayDog raises deliberately derives from :class:`~yellowdog_ray.errors
 Examples
 --------
 
-Complete, runnable examples are in `examples/builder <https://github.com/yellowdog/raydog/tree/main/examples/builder>`_: ``usage-example.py`` builds a cluster, runs a small Ray job through a tunnel and shuts down (with an observability node too, given ``RAYDOG_OBSERVABILITY=1``); ``manage-example.py`` adds, resizes and removes pools and hands the cluster to "another process" through its saved state.
+Complete, runnable examples are in `examples/builder <https://github.com/yellowdog/raydog/tree/main/examples/builder>`_: ``usage-example.py`` builds a cluster, runs a small Ray job through a tunnel and shuts down (with graphs in Ray's dashboard, given ``RAYDOG_OBSERVABILITY=1``, or an observability node, given ``RAYDOG_OBSERVABILITY=node``); ``manage-example.py`` adds, resizes and removes pools and hands the cluster to "another process" through its saved state.

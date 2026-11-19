@@ -30,16 +30,24 @@ printf 'RAY_IMAGE=%q\nRAYDOG_PIP_SPEC=%q\n' "$RAY_IMAGE" "$RAYDOG_PIP_SPEC" > /e
 chmod 644 /etc/raydog-node.env
 
 # Docker, and rsync (with which Ray copies files to the head node), unless the image
-# has them already. `apt-get update` is allowed to fail: one unreachable or expired
-# third-party repository on the image should not stop the node being set up.
+# has them already. They are installed with retries, because a package repository
+# can fail for a while; `apt-get update` is allowed to fail, so that one unreachable
+# or expired third-party repository on the image does not stop the node being set up.
 export DEBIAN_FRONTEND=noninteractive
+apt_install() {
+    for _ in 1 2 3 4 5; do
+        apt-get update || true
+        apt-get install -y "$@" && return 0
+        sleep 20
+    done
+    return 1
+}
 packages=()
 command -v docker > /dev/null || packages+=(docker.io)
 command -v rsync > /dev/null || packages+=(rsync)
 if (( ${#packages[@]} )); then
     echo "raydog: installing ${packages[*]}"
-    apt-get update >> "$LOG" 2>&1 || true
-    apt-get install -y "${packages[@]}" >> "$LOG" 2>&1
+    apt_install "${packages[@]}" >> "$LOG" 2>&1
 fi
 systemctl enable --now docker >> "$LOG" 2>&1
 

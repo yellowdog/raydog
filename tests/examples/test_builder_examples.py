@@ -8,7 +8,6 @@ needs a real Ray cluster to talk to.
 
 from __future__ import annotations
 
-import base64
 import importlib.util
 import subprocess
 import sys
@@ -23,7 +22,7 @@ from yellowdog_ray.core import yellowdog
 from yellowdog_ray.core.cluster import NodeAddress
 from yellowdog_ray.testing import FakePlatform
 
-from .test_autoscaler_examples import login_shell
+from .test_autoscaler_examples import USERDATA_LIMIT, login_shell
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "builder"
 
@@ -80,9 +79,10 @@ def test_usage_example(
         ssh_user: str,
         ssh_private_key: str,
         workers: int,
-        observability: object,
+        observability: str,
+        observability_node: object,
     ) -> None:
-        assert workers == 2 and observability is None
+        assert workers == 2 and observability == "" and observability_node is None
         jobs.append((ssh_user, platform.live_instances))
 
     setattr(example, "run_ray_job", fake_job)  # noqa: B010
@@ -99,16 +99,17 @@ def test_usage_example_with_an_observability_node(
     platform: FakePlatform, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    RAYDOG_OBSERVABILITY=1: the observability node starts before the head, and the
-    job's tunnel reaches Grafana on it, where Ray's dashboard expects it.
+    RAYDOG_OBSERVABILITY=node: the observability node starts before the head, and
+    the job's tunnel reaches Grafana on it, where Ray's dashboard expects it.
     """
-    monkeypatch.setenv("RAYDOG_OBSERVABILITY", "1")
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", "node")
     example = load("usage-example.py")
-    seen: list[object] = []
-    setattr(example, "run_ray_job", lambda *args: seen.append(args[-1]))  # noqa: B010
+    seen: list[tuple[object, ...]] = []
+    setattr(example, "run_ray_job", lambda *args: seen.append(args[-2:]))  # noqa: B010
     example.main()
-    [observability] = seen
-    assert observability is not None and observability.private_ip  # type: ignore[attr-defined]
+    [(observability, node)] = seen
+    assert observability == "node"
+    assert node is not None and node.private_ip  # type: ignore[attr-defined]
     started = [
         task.name.split("-")[0]
         for c in platform.calls
@@ -120,23 +121,43 @@ def test_usage_example_with_an_observability_node(
     assert platform.live_instances == 0
 
 
+@pytest.mark.parametrize("value", ["1", "head", "yes"])
+def test_usage_example_with_observability_on_the_head(
+    platform: FakePlatform, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """
+    RAYDOG_OBSERVABILITY=1, the default kind: Prometheus and Grafana on the head,
+    with no node of their own.
+    """
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", value)
+    example = load("usage-example.py")
+    seen: list[tuple[object, ...]] = []
+    setattr(example, "run_ray_job", lambda *args: seen.append(args[-2:]))  # noqa: B010
+    example.main()
+    assert seen == [("head", None)]
+    specs = [c.args[0] for c in platform.calls if c.method == "provision_pool"]
+    assert len(specs) == 2
+    assert not any(spec.name.endswith("observability") for spec in specs)
+
+
 def test_without_observability_there_is_no_observability_node(
     platform: FakePlatform,
 ) -> None:
     example = load("usage-example.py")
-    seen: list[object] = []
-    setattr(example, "run_ray_job", lambda *args: seen.append(args[-1]))  # noqa: B010
+    seen: list[tuple[object, ...]] = []
+    setattr(example, "run_ray_job", lambda *args: seen.append(args[-2:]))  # noqa: B010
     example.main()
-    assert seen == [None]
+    assert seen == [("", None)]
     names = [c.args[0].name for c in platform.calls if c.method == "provision_pool"]
     assert not any(name.endswith("observability") for name in names)
 
 
+@pytest.mark.parametrize("value", ["1", "node"])
 def test_observability_is_refused_with_containers(
-    platform: FakePlatform, monkeypatch: pytest.MonkeyPatch
+    platform: FakePlatform, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    """The container start scripts send nothing to an observability node."""
-    monkeypatch.setenv("RAYDOG_OBSERVABILITY", "1")
+    """The container start scripts support neither kind."""
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", value)
     monkeypatch.setenv("RAYDOG_USE_CONTAINERS", "1")
     example = load("usage-example.py")
     with pytest.raises(SystemExit, match="RAYDOG_USE_CONTAINERS"):
@@ -144,13 +165,27 @@ def test_observability_is_refused_with_containers(
     assert platform.calls == []
 
 
-def test_the_grafana_forward_goes_to_the_observability_node() -> None:
+def test_an_unknown_kind_of_observability_is_refused(
+    platform: FakePlatform, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", "loki")
+    example = load("usage-example.py")
+    with pytest.raises(SystemExit, match="RAYDOG_OBSERVABILITY must be"):
+        example.main()
+    assert platform.calls == []
+
+
+def test_the_grafana_forward_goes_where_grafana_is() -> None:
     example = load("usage-example.py")
     address = NodeAddress(task_id="t", private_ip="10.0.0.9", public_ip=None)
-    forwards = example.tunnel_forwards(address)
+    forwards = example.tunnel_forwards("node", address)
     assert PortForward(3000, 3000, remote_host="10.0.0.9") in forwards
     assert RayTunnels.CLIENT in forwards and RayTunnels.DASHBOARD in forwards
-    assert example.tunnel_forwards(None) == (RayTunnels.CLIENT, RayTunnels.DASHBOARD)
+    assert PortForward(3000, 3000) in example.tunnel_forwards("head", None)
+    assert example.tunnel_forwards("", None) == (
+        RayTunnels.CLIENT,
+        RayTunnels.DASHBOARD,
+    )
 
 
 def test_usage_example_shuts_down_when_the_job_fails(platform: FakePlatform) -> None:
@@ -190,34 +225,89 @@ def test_the_node_setup_script_gets_the_users_public_key(
     assert all("REPLACE_WITH_YOUR_PUBLIC_KEY" not in s.userdata for s in specs)
 
 
-def test_only_the_observability_node_is_set_up_for_observability(
+@pytest.mark.parametrize(
+    ("value", "head", "worker"),
+    [("", "none", "none"), ("1", "head", "none"), ("node", "alloy", "alloy")],
+)
+def test_each_node_is_set_up_for_its_part_in_observability(
     platform: FakePlatform,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    head: str,
+    worker: str,
 ) -> None:
     """
-    Prometheus, Loki and Grafana are installed at boot, as root and before the
-    Agent, on the observability node alone; every node gets Alloy's configuration.
+    Whatever a node needs is installed at boot, as root and before the Agent:
+    Prometheus and Grafana on the head, or Alloy on the head and workers to send
+    their data to the observability node, which gets Prometheus, Loki and Grafana.
+    Each node's script carries only the functions it calls (see USERDATA_LIMIT).
     """
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", value)
     settings = importlib.import_module("settings").load(default_cluster_name="c")
-    assert 'OBSERVABILITY_NODE="yes"' in settings.observability.userdata
-    for spec in (settings.head, settings.worker):
-        assert 'OBSERVABILITY_NODE="no"' in spec.userdata
-    for spec in (settings.head, settings.worker, settings.observability):
-        assert "REPLACE_WITH" not in spec.userdata
-        assert "prometheus.remote_write" in spec.userdata
+    roles = {
+        settings.head.userdata: head,
+        settings.worker.userdata: worker,
+        settings.observability_node.userdata: "node",
+    }
+    for userdata, role in roles.items():
+        assert f'OBSERVABILITY="{role}"' in userdata
+        assert "REPLACE_WITH" not in userdata
+        defined = {f for f in FUNCTIONS.values() if f"{f}() {{" in userdata}
+        assert defined == NEEDS[role], role
+        assert ("prometheus.remote_write" in userdata) == (role in ("alloy", "node"))
 
 
+# What each OBSERVABILITY role calls, and the files that define it
+FUNCTIONS = {
+    "head.sh": "setup_head_observability",
+    "alloy.sh": "install_alloy",
+    "node.sh": "setup_observability",
+}
+NEEDS = {
+    "none": set(),
+    "head": {"setup_head_observability"},
+    "alloy": {"install_alloy"},
+    "node": {"install_alloy", "setup_observability"},
+}
+
+
+@pytest.mark.parametrize(("name", "function"), FUNCTIONS.items())
+def test_each_observability_file_defines_what_the_setup_script_calls(
+    name: str, function: str
+) -> None:
+    setup = (EXAMPLES / "scripts" / "node-setup-userdata.sh").read_text()
+    text = (EXAMPLES / "scripts" / "observability" / name).read_text()
+    assert f"{function}() {{" in text and f"{function}() {{" not in setup
+    assert function in setup
+
+
+def test_the_head_points_rays_dashboard_at_its_own_grafana() -> None:
+    """Set up as in the Autoscaler example, and found by the same marker file."""
+    setup = (EXAMPLES / "scripts" / "observability" / "head.sh").read_text()
+    start = (EXAMPLES / "scripts" / "head-node-task-script.sh").read_text()
+    assert "prom_metrics_service_discovery.json" in setup
+    assert "PrivateTmp=false" in setup
+    assert "touch /etc/raydog-observability" in setup
+    assert "-f /etc/raydog-observability" in start
+    assert 'RAY_PROMETHEUS_HOST="http://localhost:9090"' in start
+
+
+@pytest.mark.parametrize("observability", ["", "1", "node"])
 @pytest.mark.parametrize("containers", ["0", "1"])
 def test_every_nodes_userdata_fits_in_an_instance(
-    platform: FakePlatform, monkeypatch: pytest.MonkeyPatch, containers: str
+    platform: FakePlatform,
+    monkeypatch: pytest.MonkeyPatch,
+    containers: str,
+    observability: str,
 ) -> None:
-    """
-    EC2 takes at most 16 KB of userdata, base64-encoded; instances given more do not
-    boot (found on real instances with 12.8 KB of script).
-    """
+    """See USERDATA_LIMIT."""
     monkeypatch.setenv("RAYDOG_USE_CONTAINERS", containers)
+    if containers == "1" and observability:
+        return  # refused
+    monkeypatch.setenv("RAYDOG_OBSERVABILITY", observability)
     settings = importlib.import_module("settings").load(default_cluster_name="c")
-    for spec in (settings.head, settings.worker, settings.observability):
-        assert len(base64.b64encode(spec.userdata.encode())) <= 16 * 1024
+    for spec in (settings.head, settings.worker, settings.observability_node):
+        assert len(spec.userdata.encode()) <= USERDATA_LIMIT
         assert spec.userdata.startswith("#!/usr/bin/bash\n")
         # What is sent, shortened, is still a script
         parsed = subprocess.run(
@@ -232,7 +322,7 @@ def test_the_observability_node_keeps_its_setup_with_containers(
     """It runs no Ray of its own, so containers make no difference to it."""
     monkeypatch.setenv("RAYDOG_USE_CONTAINERS", "1")
     settings = importlib.import_module("settings").load(default_cluster_name="c")
-    assert 'OBSERVABILITY_NODE="yes"' in settings.observability.userdata
+    assert 'OBSERVABILITY="node"' in settings.observability_node.userdata
 
 
 def test_the_container_variant_uses_the_container_scripts(

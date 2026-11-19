@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 # Starts Ray on the head node. Runs as a YellowDog task, as the Agent's user, for as
 # long as the cluster lives. RayDog sets OBSERVABILITY_HOST to the observability
-# node's private address when the cluster has one.
+# node's private address when the cluster has one; without one, the node setup may
+# have put Prometheus and Grafana on this node instead.
 
 set -euo pipefail
 
@@ -30,6 +31,13 @@ if [[ -n "${OBSERVABILITY_HOST:-}" ]]; then
         echo "raydog: Grafana Alloy is not installed; no data will go to the" \
              "observability node from this node" >&2
     fi
+elif [[ -f /etc/raydog-observability ]]; then
+    # Prometheus and Grafana on this node (RAYDOG_OBSERVABILITY=head): Prometheus
+    # finds every node through the list of metrics endpoints Ray keeps here. Your
+    # browser fetches Grafana's graphs through a tunnel to localhost:3000.
+    export RAY_GRAFANA_HOST="http://localhost:3000"
+    export RAY_GRAFANA_IFRAME_HOST="http://localhost:3000"
+    export RAY_PROMETHEUS_HOST="http://localhost:9090"
 fi
 
 stop() {

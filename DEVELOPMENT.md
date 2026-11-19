@@ -104,7 +104,7 @@ Lifecycles:
 
 Instances:
 
-- EC2 accepts at most 16 KB of userdata once base64-encoded, about 12 KB of script; an instance given more never boots.
+- EC2 accepts at most 16 KB of userdata once base64-encoded, and that includes what YellowDog adds to it, so a node's script has less room than the arithmetic suggests: 9.5 KB of script boots, 11.4 KB is refused by EC2 ("User data is limited to 16384 bytes", seen only in YellowDog's view of the compute requirement), and an instance given 12.8 KB never booted. The example tests hold every node's userdata to `USERDATA_LIMIT` in `tests/examples/test_autoscaler_examples.py`; the Builder example strips comments and gives each node only the observability functions it runs.
 - Ubuntu's cloud images have under 7 GB of usable disk. Python, Ray and `uv`'s cache fill it quickly; the setup scripts clean the cache.
 
 ## What the provider relies on Ray to do

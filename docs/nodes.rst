@@ -86,7 +86,7 @@ The simplest arrangement uses a plain Ubuntu image and gives each node type a se
 
 One detail of that script matters if you write your own: **install the Agent last**. The moment the Agent starts, the node is offered work, so everything a start script needs must already be in place.
 
-Two more matter on AWS. EC2 accepts at most 16 KB of userdata once it is base64-encoded, about 12 KB of script, and an instance given more does not boot; the Builder example strips comments and blank lines from its setup script before sending it for this reason. And Ubuntu's own images have a small root disk, under 7 GB usable, which Python, Ray and their download caches fill quickly: clear ``uv``'s cache after installing (``uv cache clean``), or give the template a larger volume.
+Two more matter on AWS. EC2 accepts at most 16 KB of userdata once it is base64-encoded, and YellowDog adds to what you give it, so keep a node's script to about 9 KB: 11 KB has been refused. The Builder example strips comments and blank lines from its setup script before sending it for this reason, and gives each node only the parts it runs. And Ubuntu's own images have a small root disk, under 7 GB usable, which Python, Ray and their download caches fill quickly: clear ``uv``'s cache after installing (``uv cache clean``), or give the template a larger volume.
 
 Setting up at boot adds a few minutes to the start of every node.
 

@@ -3,7 +3,8 @@
 Build a Ray cluster with the RayDog Builder, run a small job on it, shut it down.
 
     python usage-example.py
-    RAYDOG_OBSERVABILITY=1 python usage-example.py    # with an observability node
+    RAYDOG_OBSERVABILITY=1 python usage-example.py       # graphs in the dashboard
+    RAYDOG_OBSERVABILITY=node python usage-example.py    # and logs, on a node
 
 Settings come from the environment: see settings.py.
 """
@@ -31,19 +32,19 @@ WORKER_JOIN_TIMEOUT_SECONDS = 600
 GRAFANA_PORT = 3000
 
 
-def tunnel_forwards(observability: Any) -> tuple[PortForward, ...]:
+def tunnel_forwards(
+    observability: str, observability_node: Any
+) -> tuple[PortForward, ...]:
     """
-    The Ray client and the dashboard on the head node; and, with an observability
-    node, its Grafana, at localhost:3000, where the start script told Ray's
-    dashboard to find it for the graphs it embeds.
+    The Ray client and the dashboard on the head node; and, with observability,
+    Grafana (on the head, or on the observability node) at localhost:3000, where the
+    head's start script told Ray's dashboard to find it for the graphs it embeds.
     """
     forwards = (RayTunnels.CLIENT, RayTunnels.DASHBOARD)
-    if observability is None:
+    if not observability:
         return forwards
-    grafana = PortForward(
-        GRAFANA_PORT, GRAFANA_PORT, remote_host=observability.private_ip
-    )
-    return (*forwards, grafana)
+    host = observability_node.private_ip if observability_node else "localhost"
+    return (*forwards, PortForward(GRAFANA_PORT, GRAFANA_PORT, remote_host=host))
 
 
 def run_ray_job(
@@ -51,7 +52,8 @@ def run_ray_job(
     ssh_user: str,
     ssh_private_key: str,
     workers: int,
-    observability: Any,
+    observability: str,
+    observability_node: Any,
 ) -> None:
     """Connect to the cluster through an SSH tunnel and run a trivial Ray job."""
     import ray
@@ -62,7 +64,7 @@ def run_ray_job(
         head.public_ip,
         user=ssh_user,
         private_key=ssh_private_key,
-        forwards=tunnel_forwards(observability),
+        forwards=tunnel_forwards(observability, observability_node),
     ):
         ray.init(address="ray://localhost:10001")
         # build() returns when the head node is running; the workers join shortly
@@ -80,13 +82,13 @@ def run_ray_job(
         print("Result:", sum(ray.get([square.remote(i) for i in range(100)])))
         ray.shutdown()
 
-        if observability is not None and sys.stdin.isatty():
+        if observability and sys.stdin.isatty():
             # Keep the cluster, and the tunnel, until the user has had a look
+            where = "observability" if observability == "node" else "head"
             print(
                 "Ray's dashboard, with graphs from Grafana: http://localhost:8265\n"
                 f"Grafana itself: http://localhost:{GRAFANA_PORT} (its admin "
-                "password is in ~/grafana-admin-password on the observability "
-                "node)"
+                f"password is in ~/grafana-admin-password on the {where} node)"
             )
             input("Press Enter to shut the cluster down: ")
 
@@ -101,9 +103,10 @@ def main() -> None:
         # A backstop: the cluster is shut down below, but if this process dies
         # first, nothing outlives this
         lifetime=timedelta(hours=1),
-        # Started before the head, which is told its address
+        # With RAYDOG_OBSERVABILITY=node: started before the head, which is told
+        # its address
         observability=(
-            settings.observability if settings.observability_enabled else None
+            settings.observability_node if settings.observability == "node" else None
         ),
     )
 
@@ -119,6 +122,7 @@ def main() -> None:
             settings.ssh_user,
             settings.ssh_private_key,
             WORKER_NODES,
+            settings.observability,
             cluster.observability,
         )
     print("Cluster shut down")

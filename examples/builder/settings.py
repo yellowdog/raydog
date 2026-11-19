@@ -21,10 +21,12 @@ Optional:
     RAYDOG_USE_CONTAINERS              set to 1 to run Ray in containers on the
                                        nodes (the rayproject/ray image) instead of
                                        installing it on them; see README.md
-    RAYDOG_OBSERVABILITY               set to 1 for an observability node, with
-                                       Prometheus, Loki and Grafana, collecting
-                                       every node's metrics and logs (not with
-                                       containers); see README.md
+    RAYDOG_OBSERVABILITY               1 (or head) for graphs in Ray's dashboard,
+                                       from Prometheus and Grafana on the head
+                                       node; node for an observability node
+                                       instead, with Prometheus, Loki and Grafana,
+                                       collecting every node's metrics and logs.
+                                       Not with containers; see README.md
 """
 
 from __future__ import annotations
@@ -45,6 +47,14 @@ CONTAINER_SETUP = (
 )
 PUBLIC_KEY_PLACEHOLDER = "REPLACE_WITH_YOUR_PUBLIC_KEY"
 ALLOY_CONFIG_PLACEHOLDER = "REPLACE_WITH_ALLOY_CONFIG"
+OBSERVABILITY_PLACEHOLDER = "# REPLACE_WITH_OBSERVABILITY_FUNCTIONS"
+# The functions from scripts/observability/ that each OBSERVABILITY role needs
+OBSERVABILITY_FUNCTIONS = {
+    "none": (),
+    "head": ("head.sh",),
+    "alloy": ("alloy.sh",),
+    "node": ("alloy.sh", "node.sh"),
+}
 # type, base64 body, optional comment: nothing a shell would act on
 PUBLIC_KEY = re.compile(r"[a-z0-9@.-]+ [A-Za-z0-9+/=]+( [A-Za-z0-9@._+-]+)?")
 
@@ -53,11 +63,26 @@ def _switched_on(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
+def _observability() -> str:
+    """RAYDOG_OBSERVABILITY as "" (none), "head" or "node"."""
+    value = os.environ.get("RAYDOG_OBSERVABILITY", "").strip().lower()
+    if value in ("", "0", "false", "no"):
+        return ""
+    if value in ("1", "true", "yes", "head"):
+        return "head"
+    if value == "node":
+        return "node"
+    raise SystemExit(
+        f"RAYDOG_OBSERVABILITY must be 1 (or head), node, or empty (got {value!r})"
+    )
+
+
 def without_comments(script: str) -> str:
     """
     A script without its comment lines (shell and Alloy) and blank lines, but with
-    its first line. EC2 takes at most 16 KB of userdata once base64-encoded, and
-    instances given more do not boot; the comments are for people reading the file.
+    its first line. EC2 takes at most 16 KB of userdata once base64-encoded,
+    including what YellowDog adds, and instances given more do not boot; the
+    comments are for people reading the file.
     """
     first, *rest = script.splitlines()
     kept = [
@@ -73,8 +98,10 @@ class Settings:
     namespace: str
     head: NodeSpec
     worker: NodeSpec
-    observability: NodeSpec
-    observability_enabled: bool  # RAYDOG_OBSERVABILITY
+    # RAYDOG_OBSERVABILITY: "" for none, "head" for Prometheus and Grafana on the
+    # head node, "node" for an observability node, which this describes
+    observability: str
+    observability_node: NodeSpec
     ssh_user: str
     ssh_private_key: str
     cluster_name: str
@@ -101,55 +128,67 @@ def load(default_cluster_name: str) -> Settings:
     if not PUBLIC_KEY.fullmatch(key_text):
         raise SystemExit(f"{public_key} does not look like an OpenSSH public key")
     containers = _switched_on("RAYDOG_USE_CONTAINERS")
-    observability = _switched_on("RAYDOG_OBSERVABILITY")
+    observability = _observability()
     if containers and observability:
-        # The container start scripts run no Alloy and export no metrics
+        # The container start scripts neither point Ray's dashboard at Grafana nor
+        # run Alloy
         raise SystemExit(
             "RAYDOG_OBSERVABILITY is not available with RAYDOG_USE_CONTAINERS: "
-            "the container start scripts send nothing to an observability node"
+            "the container start scripts do not support it"
         )
-    # The setup script for a node that runs Ray as installed, or (for the
-    # observability node) Prometheus, Loki and Grafana
-    setup = without_comments(
-        (SCRIPTS / "node-setup-userdata.sh")
-        .read_text()
-        .replace(PUBLIC_KEY_PLACEHOLDER, key_text)
-        .replace(ALLOY_CONFIG_PLACEHOLDER, (SCRIPTS / "config.alloy").read_text())
-    )
-    observability_setup = setup.replace(
-        'OBSERVABILITY_NODE="no"', 'OBSERVABILITY_NODE="yes"', 1
-    )
+    setup_script = (SCRIPTS / "node-setup-userdata.sh").read_text()
+
+    def setup(role: str) -> str:
+        """
+        The setup script for a node with this OBSERVABILITY role, with only the
+        functions that role needs: EC2 limits the size of userdata.
+        """
+        functions = "".join(
+            # Each file without its first line, the #! that marks it as shell
+            (SCRIPTS / "observability" / name).read_text().split("\n", 1)[1]
+            for name in OBSERVABILITY_FUNCTIONS[role]
+        )
+        return without_comments(
+            setup_script.replace(OBSERVABILITY_PLACEHOLDER, functions, 1)
+            .replace('OBSERVABILITY="none"', f'OBSERVABILITY="{role}"', 1)
+            .replace(PUBLIC_KEY_PLACEHOLDER, key_text)
+            .replace(ALLOY_CONFIG_PLACEHOLDER, (SCRIPTS / "config.alloy").read_text())
+        )
+
     if containers:
         # That script takes its settings from the lines put before it
-        userdata = without_comments(
+        head_setup = worker_setup = without_comments(
             f'#!/usr/bin/bash\nSSH_PUBLIC_KEY="{key_text}"\n'
             + CONTAINER_SETUP.read_text()
         )
     else:
-        userdata = setup
+        # With an observability node, the head and workers send it their data;
+        # without one, the head may run Prometheus and Grafana itself
+        head_setup = setup({"head": "head", "node": "alloy"}.get(observability, "none"))
+        worker_setup = setup("alloy" if observability == "node" else "none")
     suffix = "-docker.sh" if containers else ".sh"
     images_id = os.environ.get("RAYDOG_IMAGES_ID") or None
 
-    def node(template_variable: str, script: str, setup: str = userdata) -> NodeSpec:
+    def node(template_variable: str, script: str, userdata: str) -> NodeSpec:
         return NodeSpec(
             compute_requirement_template=need(template_variable),
             start_script=(SCRIPTS / script).read_text(),
             images_id=images_id,
-            userdata=setup,
+            userdata=userdata,
         )
 
     return Settings(
         namespace=need("RAYDOG_NAMESPACE"),
-        head=node("RAYDOG_HEAD_TEMPLATE", f"head-node-task-script{suffix}"),
-        worker=node("RAYDOG_WORKER_TEMPLATE", f"worker-node-task-script{suffix}"),
+        head=node("RAYDOG_HEAD_TEMPLATE", f"head-node-task-script{suffix}", head_setup),
+        worker=node(
+            "RAYDOG_WORKER_TEMPLATE", f"worker-node-task-script{suffix}", worker_setup
+        ),
         # Runs no Ray of its own, so the same with or without containers
-        observability=node(
-            "RAYDOG_HEAD_TEMPLATE",
-            "observability-node-task-script.sh",
-            observability_setup,
+        observability_node=node(
+            "RAYDOG_HEAD_TEMPLATE", "observability-node-task-script.sh", setup("node")
         ),
         ssh_user=os.environ.get("RAYDOG_SSH_USER") or "yd-agent",
         ssh_private_key=str(private_key),
         cluster_name=os.environ.get("RAYDOG_CLUSTER_NAME") or default_cluster_name,
-        observability_enabled=observability,
+        observability=observability,
     )

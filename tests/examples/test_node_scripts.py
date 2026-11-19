@@ -49,6 +49,24 @@ def test_a_setup_script_says_where_it_failed(script: Path) -> None:
     assert "' ERR" in script.read_text()
 
 
+BOOT_SCRIPTS = [
+    *SETUP_SCRIPTS,
+    *sorted((REPO / "examples" / "builder" / "scripts" / "observability").glob("*.sh")),
+]
+
+
+@pytest.mark.parametrize("script", BOOT_SCRIPTS, ids=lambda p: p.name)
+def test_packages_are_installed_at_boot_with_retries(script: Path) -> None:
+    """
+    A package repository can fail for a while, and a node whose setup fails at
+    boot never starts: every install goes through ``apt_install``, which retries.
+    """
+    text = script.read_text()
+    installs = text.count("apt-get install") + text.count("apt-get -y install")
+    defines = "apt_install() {" in text
+    assert installs == (1 if defines else 0), "install with apt_install"
+
+
 @pytest.mark.parametrize("script", [*SETUP_SCRIPTS, PROVISION], ids=lambda p: p.name)
 def test_ray_is_on_the_path_before_ssh_can_get_in(script: Path) -> None:
     """

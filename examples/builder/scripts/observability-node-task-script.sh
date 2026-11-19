@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Runs on the observability node as a YellowDog task, as the Agent's user, for as
 # long as the cluster lives. The node setup script has already installed and
-# started Prometheus, Loki, Grafana and Alloy (see OBSERVABILITY_NODE there), so
+# started Prometheus, Loki, Grafana and Alloy (see OBSERVABILITY there), so
 # this checks that they are running and holds the node.
 
 set -euo pipefail
