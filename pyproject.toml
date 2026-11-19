@@ -43,7 +43,7 @@ dev = [
     "types-PyYAML",
     "types-requests",
 ]
-docs = ["sphinx", "sphinx-rtd-theme"]
+docs = ["sphinx", "sphinx-copybutton", "sphinx-rtd-theme"]
 
 [project.scripts]
 raydog = "yellowdog_ray.cli:main"

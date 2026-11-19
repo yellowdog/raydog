@@ -18,7 +18,17 @@ release = __version__
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.todo", "sphinx.ext.viewcode", "sphinx.ext.autodoc"]
+extensions = [
+    "sphinx.ext.todo",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.autodoc",
+    "sphinx_copybutton",
+]
+
+# A copy button on every code block. Where a block shows commands after a "$ "
+# prompt, it copies only the commands, without the prompts or the output.
+copybutton_prompt_text = r"\$ "
+copybutton_prompt_is_regexp = True
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
