@@ -105,7 +105,7 @@ The graphs are on the dashboard's Metrics tab, and fill in as the cluster works;
 
    $ ./submit-job.sh
 
-Within a minute or so the autoscaler asks for four workers, and a worker pool for them appears in the portal. The workers take a minute or two to start, because each is set up when it boots, as the head was; the job's tasks run as workers join, and it prints where each one ran. The whole job takes about three minutes. Two minutes after it ends, Ray removes the idle workers, and their instances are released a minute or two after that. ``raydog status`` shows each stage.
+Within a minute or so the autoscaler asks for four workers, and a worker pool for them appears in the portal. The workers take a minute or two to start, because each is set up when it boots, as the head was; the job's tasks run as workers join, and it prints where each one ran. The whole job takes about three minutes. Two or three minutes after it ends, Ray removes the idle workers, and their instances are released within five minutes or so of the job's end. ``raydog status`` shows each stage.
 
 Shut it down
 ~~~~~~~~~~~~

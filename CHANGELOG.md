@@ -4,6 +4,11 @@ Notable changes to RayDog (`yellowdog-ray`). Versions follow [semantic versionin
 
 ## 3.0.1 (unreleased)
 
+### Changed
+
+- The Autoscaler example's `down.sh` no longer shows Ray's warning that it loaded a cached provider configuration, whose advice (`--no-config-cache`) `ray down` does not take.
+- The quick start's timing for removing idle workers matches what a run of it shows: their instances are released within about five minutes of the job's end.
+
 ## 3.0.0 (2026-11-20)
 
 A rewrite. Nothing is compatible with version 2: see the "Moving from version 2" page of the documentation for a mapping of every name.

@@ -8,11 +8,17 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Ray adds two empty legacy settings to the configuration of every external provider,
-# then warns that it is dropping them. Hide just those lines of its error output. The
-# filter ignores Ctrl-C, so that what Ray and RayDog say as they stop still shows.
+# then warns that it is dropping them. And 'ray down' runs 'ray stop' on the head with
+# the configuration it cached for this file, then warns that it did, suggesting
+# --no-config-cache, which 'ray down' does not take; the configuration was rendered
+# afresh above, so the cache matches it. Hide just those lines of its error output.
+# The filter ignores Ctrl-C, so that what Ray and RayDog say as they stop still shows.
 ray_quietly() {
     { ray "$@" 2>&1 1>&3 3>&- |
-        { trap '' INT; grep -v --line-buffered "Dropping the empty legacy field" >&2 || true; }; } 3>&1
+        { trap '' INT; grep -v --line-buffered \
+            -e "Dropping the empty legacy field" \
+            -e "Loaded cached provider configuration" \
+            -e "try re-running the command with" >&2 || true; }; } 3>&1
 }
 trap 'echo "down.sh: interrupted, so the cluster may be partly removed: run ./down.sh again to finish." >&2; exit 130' INT
 TEMPLATE=raydog.yaml
