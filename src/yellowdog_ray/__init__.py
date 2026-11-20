@@ -24,7 +24,7 @@ from yellowdog_ray.errors import (
 from yellowdog_ray.tunnels import PortForward, RayTunnels
 
 # Set by bin/release.py: a development version between releases
-__version__ = "3.0.0.dev0"
+__version__ = "3.0.0"
 
 __all__ = [
     "BuildTimeoutError",

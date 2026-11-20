@@ -2,7 +2,7 @@
 
 Notable changes to RayDog (`yellowdog-ray`). Versions follow [semantic versioning](https://semver.org).
 
-## 3.0.0 (unreleased)
+## 3.0.0 (2026-11-20)
 
 A rewrite. Nothing is compatible with version 2: see the "Moving from version 2" page of the documentation for a mapping of every name.
 
