@@ -27,12 +27,13 @@ PACKER_VARS = -var "python_version=$(PYTHON_VERSION)" \
 
 .PHONY: help install lint format typecheck test check test-online test-instances test-sweep \
         build clean \
-        docs docs-build-image docs-publish-image release release-test ami-validate ami update
+        docs docs-linkcheck docs-build-image docs-publish-image release release-test \
+        ami-validate ami update
 
 help:
 	@echo "Targets: install, update, lint, format, typecheck, test, check, test-online,"
 	@echo "         test-instances, test-sweep,"
-	@echo "         build, clean, docs, docs-build-image, docs-publish-image,"
+	@echo "         build, clean, docs, docs-linkcheck, docs-build-image, docs-publish-image,"
 	@echo "         release, release-test, ami-validate, ami"
 
 install:
@@ -87,6 +88,12 @@ clean:
 # an incremental build leaves old menus on pages whose own source has not changed
 docs:
 	sphinx-build -E -W --keep-going -b html docs docs/_build/html
+
+# Every external link the pages make, checked over the network (by hand before
+# a release, never in CI, which would fail on another site's outage); the
+# report is in docs/_build/linkcheck/output.txt
+docs-linkcheck:
+	sphinx-build -b linkcheck docs docs/_build/linkcheck
 
 docs-build-image: docs
 	@test -n "$(VERSION)" || { echo "no __version__ found in $(VERSION_FILE)"; exit 1; }

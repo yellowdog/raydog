@@ -150,4 +150,4 @@ Everything RayDog raises deliberately derives from :class:`~yellowdog_ray.errors
 Examples
 --------
 
-Complete, runnable examples are in `examples/builder <https://github.com/yellowdog/raydog/tree/main/examples/builder>`_: ``usage-example.py`` builds a cluster, runs a small Ray job through a tunnel and shuts down (with graphs in Ray's dashboard, given ``RAYDOG_OBSERVABILITY=1``, or an observability node, given ``RAYDOG_OBSERVABILITY=node``); ``manage-example.py`` adds, resizes and removes pools and hands the cluster to "another process" through its saved state.
+Complete, runnable examples are in :repo:`examples/builder`: ``usage-example.py`` builds a cluster, runs a small Ray job through a tunnel and shuts down (with graphs in Ray's dashboard, given ``RAYDOG_OBSERVABILITY=1``, or an observability node, given ``RAYDOG_OBSERVABILITY=node``); ``manage-example.py`` adds, resizes and removes pools and hands the cluster to "another process" through its saved state.

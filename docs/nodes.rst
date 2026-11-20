@@ -82,7 +82,7 @@ Image families are managed in the YellowDog portal, under images.
 Setting nodes up at boot
 ------------------------
 
-The simplest arrangement uses a plain Ubuntu image and gives each node type a setup script as ``userdata``, which runs once, as root, when an instance first boots. The examples include one: `examples/autoscaler/scripts/node-setup.sh <https://github.com/yellowdog/raydog/tree/main/examples/autoscaler/scripts/node-setup.sh>`_. It installs Python and Ray with ``uv`` into ``/opt/raydog/venv``, installs the YellowDog Agent, and authorises your SSH public key for the Agent's user.
+The simplest arrangement uses a plain Ubuntu image and gives each node type a setup script as ``userdata``, which runs once, as root, when an instance first boots. The examples include one: :repo:`examples/autoscaler/scripts/node-setup.sh`. It installs Python and Ray with ``uv`` into ``/opt/raydog/venv``, installs the YellowDog Agent, and authorises your SSH public key for the Agent's user.
 
 One detail of that script matters if you write your own: **install the Agent last**. The moment the Agent starts, the node is offered work, so everything a start script needs must already be in place.
 
@@ -93,7 +93,7 @@ Setting up at boot adds a few minutes to the start of every node.
 Baking an image
 ---------------
 
-For clusters that are started often, or that are large, build a machine image with everything installed and name it as ``images_id``, ideally as part of an image family. The repository includes a Packer template for AWS in `packer/ <https://github.com/yellowdog/raydog/tree/main/packer>`_. With such an image a node is ready within a minute or so of its instance starting, and ``userdata`` is needed only for what differs between clusters, such as the SSH key.
+For clusters that are started often, or that are large, build a machine image with everything installed and name it as ``images_id``, ideally as part of an image family. The repository includes a Packer template for AWS in :repo:`packer/ <packer>`. With such an image a node is ready within a minute or so of its instance starting, and ``userdata`` is needed only for what differs between clusters, such as the SSH key.
 
 Containers
 ----------

@@ -49,7 +49,7 @@ Only two parts of a Ray cluster YAML are RayDog's: the ``provider`` section, and
    head_setup_commands: []
    worker_setup_commands: []
 
-A complete example, with every setting explained in place and the scripts it uses, is in `examples/autoscaler <https://github.com/yellowdog/raydog/tree/main/examples/autoscaler>`_.
+A complete example, with every setting explained in place and the scripts it uses, is in :repo:`examples/autoscaler`.
 
 The ``provider`` section
 ++++++++++++++++++++++++

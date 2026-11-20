@@ -1,7 +1,7 @@
 RayDog: Ray clusters on YellowDog
 =================================
 
-**RayDog** runs `Ray <https://ray.io>`_ clusters on the `YellowDog Platform <https://yellowdog.ai>`_. YellowDog finds and provisions the compute, across clouds, regions and instance types, according to templates you define; RayDog turns that compute into a Ray cluster and keeps the two in step.
+**RayDog** runs `Ray <https://www.ray.io/>`_ clusters on the `YellowDog Platform <https://yellowdog.ai>`_. YellowDog finds and provisions the compute, across clouds, regions and instance types, according to templates you define; RayDog turns that compute into a Ray cluster and keeps the two in step.
 
 The usual way to use it is the **Autoscaler**, which plugs YellowDog into Ray's own cluster launcher. You write a cluster YAML, run ``ray up``, and Ray adds and removes worker nodes as its workload demands. Start here unless one of the reasons below applies.
 
@@ -86,3 +86,4 @@ What you need from YellowDog
    migration
    testing
    yellowdog_ray
+   GitHub Repository <https://github.com/yellowdog/raydog>

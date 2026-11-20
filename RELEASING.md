@@ -29,7 +29,7 @@ You need:
 
 - `main` has nothing that is not on `next-version`, so that `main` can be fast-forwarded.
 
-Optionally, run the tests against a live YellowDog account first: `make test-online`, then `make test-instances` for the tests that start cloud instances (it ends with the sweep). See `tests/README.md`.
+Optionally, run the tests against a live YellowDog account first: `make test-online`, then `make test-instances` for the tests that start cloud instances (it ends with the sweep). See `tests/README.md`. Also optionally, `make docs-linkcheck` checks the documentation's external links over the network; its report is in `docs/_build/linkcheck/output.txt`.
 
 ## Releasing
 

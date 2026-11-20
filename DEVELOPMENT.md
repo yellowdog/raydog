@@ -26,6 +26,9 @@ pytest tests/unit/test_cluster_core.py -k teardown     # one file, one pattern
 | `make test-instances` | everything that starts instances, then the sweep | credentials, templates, an image, an SSH key |
 | `make test-sweep` | removes anything `raydog-test-…` left behind, fails if an instance is alive | credentials |
 | `make docs` | Sphinx, warnings are errors, full rebuild | nothing |
+| `make docs-linkcheck` | the pages' external links, over the network; by hand before a release, never in CI | network |
+
+A link to a file or directory in the repository is written `` :repo:`examples/builder` ``, never as a URL: it points at the version's tag (`v3.0.0`), or at `main` for a development version, so a released version's pages show that version's files. Each page's View on GitHub link goes to its source in the same way (`docs/_templates/breadcrumbs.html`); the sidebar shows the version under the title (`docs/_templates/layout.html`), and the home page's sections under the menu's Overview, which Sphinx would not expand for the page holding the menu (`_overview_sections()` in `docs/conf.py`). Each page names its address at `https://docs.yellowdog.ai/raydog/` (`html_baseurl`) as its canonical one. The link check skips the `#...` anchors of GitHub's and YellowDog's pages, which those sites make in the browser.
 
 Online settings (`YD_API_KEY_ID`, `RAYDOG_TEST_WORKER_TEMPLATE` and the rest) come from the environment or a repo-root `.env`; `tests/README.md` lists them. Without them the online tests are *skipped*, not failed, so read pytest's summary line: `-rs` says why a test skipped.
 
